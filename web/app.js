@@ -60,8 +60,8 @@ function fit(ctx, text, maxW, size, min, weight = "700") {
 const usDate = iso => { const [y, m, d] = (iso || "").split("-"); return y ? `${m}/${d}/${y}` : ""; };
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
-// ------------------------------------------------------------------ inventory tag: 30321, drawn across the label's length
-// shop logo, bottom right of the built-in tag, drawn 0.42" tall. It's per PC (Settings → Tag logo, kept in the config
+// ------------------------------------------------------------------ inventory tag (30252 or 30321), drawn across the label's length
+// shop logo, bottom right of the built-in tag, drawn 0.42" tall on 30321 (scaled with the label's height). It's per PC (Settings → Tag logo, kept in the config
 // folder), never in the repo; no logo → the tag is drawn without one.
 let TAG_LOGO = new Image();
 function loadLogo() {
@@ -73,10 +73,11 @@ export let tagLogoReady = Promise.resolve();
 const LOGO_H = px(0.42);
 // the logo at print size in pure black and white (the colour face/lenses → white), drawn 1:1 so it stays crisp
 let bwLogo = null;
-function tagLogo() {
-  if (bwLogo || !TAG_LOGO.complete || !TAG_LOGO.naturalWidth) return bwLogo;
+function tagLogo(height = LOGO_H) {
+  if (!TAG_LOGO.complete || !TAG_LOGO.naturalWidth) return null;
+  if (bwLogo && bwLogo.height === height) return bwLogo;
   const c = document.createElement("canvas");
-  c.height = LOGO_H; c.width = Math.round(LOGO_H * TAG_LOGO.naturalWidth / TAG_LOGO.naturalHeight);
+  c.height = height; c.width = Math.round(height * TAG_LOGO.naturalWidth / TAG_LOGO.naturalHeight);
   const ctx = c.getContext("2d");
   ctx.imageSmoothingQuality = "high"; ctx.drawImage(TAG_LOGO, 0, 0, c.width, c.height);
   const img = ctx.getImageData(0, 0, c.width, c.height), d = img.data;
@@ -89,13 +90,14 @@ function tagLogo() {
 }
 // offsetMm: the whole design (text, barcode, logo) moves down (+) / up (−) — fixes printers that clip the top line
 export function drawTag(canvas, f, flip = false, offsetMm = tagOffset(), tpl = activeTemplate()) {
-  const [W, H] = area(CFG.labels.tag);                        // printable area as the printer feeds it: 391 × 960 (portrait)
+  const [W, H] = area(CFG.labels.tag);                        // printable area as fed: 30321 391 × 960, 30252 298 × 962
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext("2d");
   ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
   ctx.save();                                                   // design across the label's length, turned onto the page
   if (!flip) { ctx.translate(W, 0); ctx.rotate(Math.PI / 2); } else { ctx.translate(0, H); ctx.rotate(-Math.PI / 2); }
-  const DW = H, DH = W;                                         // design space: 960 × 391
+  const DW = H, DH = W;                                         // design space: 960 × 391 (30321) or 962 × 298 (30252)
+  const k = Math.min(1, DH / 391), z = v => Math.round(v * k);  // sizes below are for 30321; narrower labels scale down
   if (f.free != null) {                                         // blank tag: just the typed lines (offset + flip apply)
     ctx.translate(0, Math.round(offsetMm / 25.4 * 300));
     drawFree(ctx, f.free, DW, DH);
@@ -115,27 +117,27 @@ export function drawTag(canvas, f, flip = false, offsetMm = tagOffset(), tpl = a
   const bar = f.barcode && f.ticket;
   const name = f.customer || "Customer";
   // a long customer name: one line down to 56 px, else two lines (split at the space nearest the middle)
-  let nameLines = [name], nameMax = bar ? 88 : 104;
-  if (fit(ctx, name, w, nameMax, 56) === 56 && ctx.measureText(name).width > w && name.includes(" ")) {
+  let nameLines = [name], nameMax = z(bar ? 88 : 104);
+  if (fit(ctx, name, w, nameMax, z(56)) === z(56) && ctx.measureText(name).width > w && name.includes(" ")) {
     const spaces = [...name.matchAll(/ /g)].map(m => m.index);
     const cut = spaces.reduce((a, b) => Math.abs(b - name.length / 2) < Math.abs(a - name.length / 2) ? b : a);
     nameLines = [name.slice(0, cut), name.slice(cut + 1)];
-    nameMax = bar ? 52 : 62;
+    nameMax = z(bar ? 52 : 62);
   }
   const small = !!f.contact || nameLines.length > 1;              // a 4th line: everything a little smaller
   const lines = [
-    ...nameLines.map(t => ({ t, size: small ? Math.min(nameMax, 78) : nameMax, min: 30, weight: "700", name: true })),
-    ...(f.contact ? [{ t: f.contact, size: bar ? 44 : 54, min: 28, weight: "400" }] : []),
-    { t: `Received: ${usDate(f.received)}`, size: small ? (bar ? 42 : 50) : (bar ? 54 : 62), min: 28, weight: "400" },
-    { t: `Ticket#: ${f.ticket || ""}`, size: small ? (bar ? 56 : 68) : (bar ? 70 : 88), min: 32, weight: "700" },
+    ...nameLines.map(t => ({ t, size: small ? Math.min(nameMax, z(78)) : nameMax, min: z(30), weight: "700", name: true })),
+    ...(f.contact ? [{ t: f.contact, size: z(bar ? 44 : 54), min: z(28), weight: "400" }] : []),
+    { t: `Received: ${usDate(f.received)}`, size: z(small ? (bar ? 42 : 50) : (bar ? 54 : 62)), min: z(28), weight: "400" },
+    { t: `Ticket#: ${f.ticket || ""}`, size: z(small ? (bar ? 56 : 68) : (bar ? 70 : 88)), min: z(32), weight: "700" },
   ];
   if (nameLines.length > 1) {                                   // both name lines the same size
-    const s = Math.min(...nameLines.map(t => fit(ctx, t, w, nameMax, 30)));
+    const s = Math.min(...nameLines.map(t => fit(ctx, t, w, nameMax, z(30))));
     lines[0].size = lines[1].size = s;
   }
-  const barH = bar ? (small ? 56 : 70) : 0, gap = small ? 8 : 14;
-  const logo = tagLogo();
-  const logoW = logo ? logo.width : 0, logoY = bottom - LOGO_H;
+  const barH = bar ? z(small ? 56 : 70) : 0, gap = z(small ? 8 : 14);
+  const logoH = z(LOGO_H), logo = tagLogo(logoH);
+  const logoW = logo ? logo.width : 0, logoY = bottom - logoH;
   const narrow = w - logoW - 24;                                // lines that reach down beside the logo stop short of it
   let maxW = lines.map(() => w), sizes, ys, barY;
   for (let pass = 0; pass < 4; pass++) {
@@ -144,7 +146,7 @@ export function drawTag(canvas, f, flip = false, offsetMm = tagOffset(), tpl = a
     let y = top + Math.max(0, (bottom - top - total) / 2);
     ys = lines.map((l, i) => {
       const base = y + sizes[i] * 0.86;
-      y = base + sizes[i] * 0.14 + (l.name && nameLines.length > 1 && i === 0 ? 4 : gap);
+      y = base + sizes[i] * 0.14 + (l.name && nameLines.length > 1 && i === 0 ? z(4) : gap);
       return base;
     });
     barY = y;
@@ -344,7 +346,8 @@ function showTemplates() {
   $("#tpl-edit").hidden = $("#tpl-delete").hidden = !$("#tpl-select").value;
 }
 function editTemplate(t) {
-  const big = Math.abs(t.rect?.w * 300 - 960) > 150 || Math.abs(t.rect?.h * 300 - 391) > 80;
+  const [aw, ah] = area(CFG.labels.tag);
+  const big = Math.abs(t.rect?.w * 300 - ah) > 150 || Math.abs(t.rect?.h * 300 - aw) > 80;
   tplPanel.innerHTML = `<h3>Template fields <small>${esc(t.name)}${t.labelName ? " · " + esc(t.labelName) : ""}</small></h3>
     ${t.orientation !== "Landscape" ? `<p class="warn">This template is ${esc(t.orientation)} — LabelDesk draws tags landscape; check the preview.</p>` : ""}
     ${big ? `<p class="warn">Made for a different label size — positions are scaled to this tag. Check the preview.</p>` : ""}
@@ -494,6 +497,14 @@ $("#cw-clear").onclick = async () => {
   await api("cw/clear", {}); $("#cw-checks").innerHTML = ""; await loadCW(); toast("Removed");
 };
 
+// ---- Settings → Tag labels: which roll is in the 550 Turbo (the tag is drawn for that label's printable area)
+$("#tag-label").onchange = async e => {
+  try {
+    await api("settings/tag-label", { label: e.target.value });
+    CFG = await api("config"); drawTagPreview(); toast(`Tags now print on ${CFG.labels.tag.stock} labels`);
+    $("#tag-stock").textContent = `${CFG.tagLabel} · ${CFG.labels.tag.size}`;
+  } catch (err) { toast(err.message, true); $("#tag-label").value = CFG.tagLabel; }
+};
 // ---- Settings → Tag logo (per PC; kept in the config folder, not in the app)
 function showLogoState() {
   const has = !!TAG_LOGO.naturalWidth;
@@ -835,6 +846,8 @@ window.addEventListener("focus", rollDate);
   form.received.value = today();
   setInterval(rollDate, 60000);
   $("#flip").checked = flip();
+  $("#tag-label").value = CFG.tagLabel;
+  $("#tag-stock").textContent = `${CFG.tagLabel} · ${CFG.labels.tag.size}`;
   try { form.showContact.checked = JSON.parse(localStorage.getItem("showContact")) ?? false; } catch {}
   $("#win-printer").hidden = $("#win-dymo").hidden = CFG.platform !== "windows";
   $("#about-version").textContent = "version " + CFG.version;

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Create the CUPS queues LabelDesk uses:
-#   Dymo-550-Turbo      LabelWriter 550 Turbo · inventory tags · 30321 Large Address (1.4" × 3.5")
+#   Dymo-550-Turbo      LabelWriter 550 Turbo · inventory tags · 30252 Address (1-1/8" × 3-1/2"; LabelDesk sets the page per print)
 #   Dymo-5XL            LabelWriter 5XL       · shipping labels · 1744907 (4" × 6")
 #   LabelDesk-Shipping  "Shipping Label (LabelDesk)" — print a carrier's label page to it from any app; it opens in
 #                       LabelDesk found, upright and ready (tools/cups/labeldesk backend → /var/spool/labeldesk)
@@ -31,7 +31,7 @@ for u in "$t_uri" "$x_uri"; do
       || echo "  WARNING: $h:$PORT not answering (printer off, wrong IP, or another port — DYMO_PORT=…)";; esac
 done
 sudo lpadmin -p Dymo-550-Turbo -E -v "$t_uri" -m "$(basename "$(ppd lw550t)")" \
-  -D "DYMO LabelWriter 550 Turbo (inventory tags)" -o PageSize=w102h252 -o printer-error-policy=abort-job 2>/dev/null
+  -D "DYMO LabelWriter 550 Turbo (inventory tags)" -o PageSize=w79h252 -o printer-error-policy=abort-job 2>/dev/null
 sudo lpadmin -p Dymo-5XL -E -v "$x_uri" -m "$(basename "$(ppd lw5xl)")" \
   -D "DYMO LabelWriter 5XL (shipping)" -o PageSize=1744907_4_in_x_6_in -o printer-error-policy=abort-job 2>/dev/null
 

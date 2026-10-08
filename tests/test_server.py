@@ -58,7 +58,7 @@ class Server(ServerBase):
     def test_config_has_both_labels(self):
         code, c = self.call("config")
         self.assertEqual(code, 200)
-        self.assertEqual((c["labels"]["tag"]["page"], c["labels"]["ship"]["page"]), ("w102h252", "1744907_4_in_x_6_in"))
+        self.assertEqual((c["labels"]["tag"]["page"], c["labels"]["ship"]["page"]), ("w79h252", "1744907_4_in_x_6_in"))   # 30252 by default
 
     def test_print_sends_exact_lp_command_and_remembers(self):
         done = subprocess.CompletedProcess([], 0, "request id is Dymo-550-Turbo-7 (1 file(s))\n", "")
@@ -70,7 +70,7 @@ class Server(ServerBase):
         self.assertEqual(again, 409)                                  # same label within 3 s = double press
         args = run.call_args.args[0]
         self.assertEqual(args[:5], ["lp", "-d", "Dymo-550-Turbo", "-n", "3"])
-        self.assertIn("PageSize=w102h252", args)
+        self.assertIn("PageSize=w79h252", args)
         self.assertIn("ppi=300", args)                               # 1:1 — the canvas is the printable area
         with mock.patch.object(app.ipp, "job", side_effect=LookupError("gone")):     # not this PC's real CUPS
             h = self.call("history")[1]["items"][0]
@@ -374,3 +374,31 @@ class WindowsInstallUpdate(unittest.TestCase):
     def test_not_newer_is_refused(self):
         with mock.patch.object(app, "WINDOWS", True), self.assertRaises(ValueError):
             app.install_windows_update(app.VERSION)
+
+
+class TagLabelSetting(ServerBase):
+    """Settings → Tag labels: 30252 Address (the shop's roll, default) or 30321 Large Address; saved in config.json."""
+    def tearDown(self):
+        app.save_config(tag_label=app.DEFAULT_TAG_STOCK)
+
+    def test_default_is_30252_with_the_ppd_area(self):
+        t = self.call("config")[1]["labels"]["tag"]
+        self.assertEqual((t["page"], t["stock"]), ("w79h252", "30252 Address"))
+        w = int((t["safe_in"][2] - t["safe_in"][0]) * 300) - 1
+        h = int((t["safe_in"][3] - t["safe_in"][1]) * 300) - 1
+        self.assertEqual((w, h), (298, 962))                                   # the canvas the browser draws
+
+    def test_switching_to_30321_changes_the_page_lp_gets(self):
+        self.assertEqual(self.call("settings/tag-label", {"label": "30321"})[0], 200)
+        self.assertEqual(self.call("config")[1]["labels"]["tag"]["page"], "w102h252")
+        done = subprocess.CompletedProcess([], 0, "request id is Dymo-550-Turbo-8 (1 file(s))\n", "")
+        with mock.patch.object(app.subprocess, "run", return_value=done) as run:
+            self.call("print", {"kind": "tag", "png": PNG, "copies": 1, "fields": {"x": 2}})
+        self.assertIn("PageSize=w102h252", run.call_args[0][0])
+
+    def test_unknown_label_refused_and_other_settings_kept(self):
+        app.save_config(flip_tag=True)
+        self.assertEqual(self.call("settings/tag-label", {"label": "99999"})[0], 400)
+        self.call("settings/tag-label", {"label": "30252"})
+        self.assertTrue(app.config()["flip_tag"])
+        app.save_config(flip_tag=False)

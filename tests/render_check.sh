@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Render check without a printer: draw sample tags with the real app code in headless Chrome, then verify
-#   · page size = the 30321 printable area at 300 dpi (391 × 960)   · the ticket barcode decodes (zbarimg)
+#   · page size = the tag label's printable area at 300 dpi (30252: 298 × 962, 30321: 391 × 960)   · the ticket barcode decodes (zbarimg)
 # Writes the PNGs (turned to reading orientation) to ./render-out/ for a visual look.
 # Needs: google-chrome (or chromium), python3-pillow, zbar.   Usage: tests/render_check.sh
 set -euo pipefail
@@ -11,6 +11,8 @@ cp -r web "$work/web"; cp tests/render/test.js "$work/web/"
 sed -i 's#<script type="module" src="app.js"></script>#&<script type="module" src="test.js"></script>#' "$work/web/index.html"
 # a stand-in shop logo (the real one is per PC, never in the repo) so the logo layout gets checked too
 mkdir -p "$work/home/.config/labeldesk"
+stock=${1:-30252}                         # tests/render_check.sh [30252|30321]
+echo "{\"tag_label\": \"$stock\"}" > "$work/home/.config/labeldesk/config.json"
 python3 -c "from PIL import Image, ImageDraw; im = Image.new('RGBA', (180, 200), (0, 0, 0, 0)); d = ImageDraw.Draw(im)
 d.rounded_rectangle((10, 40, 170, 190), 28, fill='black'); d.ellipse((40, 70, 80, 110), fill='white'); d.ellipse((100, 70, 140, 110), fill='white')
 im.save('$work/home/.config/labeldesk/tag-logo.png')"
@@ -19,17 +21,18 @@ HOME="$work/home" LABELDESK_WEB="$work/web" LABELDESK_DATA="$work/data" LABELDES
 sleep 1
 chrome=$(command -v google-chrome || command -v chromium-browser || command -v chromium)
 "$chrome" --headless=new --user-data-dir="$work/chrome" --virtual-time-budget=6000 --dump-dom "http://127.0.0.1:$port/" 2>/dev/null >"$work/dom.html"
-python3 - "$work/dom.html" "$out" <<'PY'
+python3 - "$work/dom.html" "$out" "$stock" <<'PY'
 import base64, html, io, json, re, sys
 from PIL import Image
 d = json.loads(html.unescape(re.search(r'<pre id="out">(.*?)</pre>', open(sys.argv[1]).read(), re.S).group(1)))
 assert d["c128_width_errors"] == 0, "Code 128 table has a pattern of the wrong width"
 for k in ("tag", "long_bar", "contact_bar", "offset_bar", "template_bar", "blank"):
     im = Image.open(io.BytesIO(base64.b64decode(d[k].split(",")[1])))
-    assert im.size == (391, 960), f"{k}: {im.size} — must be the 30321 printable area 391×960 or CUPS tiles it"
+    want = {"30252": (298, 962), "30321": (391, 960)}[sys.argv[3]]
+    assert im.size == want, f"{k}: {im.size} — must be the {sys.argv[3]} printable area {want} or CUPS tiles it"
     im.save(f"{sys.argv[2]}/{k}.png")
     im.rotate(90, expand=True).save(f"{sys.argv[2]}/{k}-reading.png")
-print("sizes OK (391×960)")
+print(f"sizes OK ({sys.argv[3]} printable area)")
 PY
 for k in long_bar contact_bar offset_bar template_bar; do
   zbarimg --quiet "$out/$k.png" | grep -qx "CODE-128:75013" && echo "barcode OK on $k (CODE-128:75013)" || { echo "barcode did NOT decode on $k"; exit 1; }

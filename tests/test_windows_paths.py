@@ -18,9 +18,10 @@ os.environ["LABELDESK_KEYS"] = "file"
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "server"))
 
 fake = types.SimpleNamespace(calls=[], jobs={})
-def _submit(printer, kind, gray, copies, title):
+def _submit(printer, kind, gray, copies, title, paper=None):
     fake.calls.append((printer, kind, gray[0], gray[1], len(gray[2]), copies))
-    return "41", "30321 Large Address"
+    fake.paper = paper
+    return "41", (paper or ("4 in x 6 in",))[0]
 fake.submit = _submit
 fake.find = lambda: {"tag": "DYMO LabelWriter 550 Turbo", "ship": "DYMO LabelWriter 5XL", "all": []}
 fake.job = lambda printer, job_id: fake.jobs.get(job_id, {"state": "done", "message": ""})
@@ -70,6 +71,7 @@ class WindowsPaths(unittest.TestCase):
         code, r = self.call("print", {"kind": "tag", "png": png, "gray": gray, "copies": 2, "fields": {"customer": "Acme"}})
         self.assertEqual((code, r["queue"], r["job"]), (200, "DYMO LabelWriter 550 Turbo", "41"))
         self.assertEqual(fake.calls[0], ("DYMO LabelWriter 550 Turbo", "tag", 4, 3, 12, 2))
+        self.assertEqual(fake.paper, ("30252",))                                 # DYMO's paper for the shop's tag roll
         self.assertEqual(self.call("config")[1]["platform"], "windows")
 
     def test_wrong_grey_size_refused(self):

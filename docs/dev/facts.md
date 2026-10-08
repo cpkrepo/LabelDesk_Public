@@ -10,7 +10,7 @@
    `sudo ausearch -m avc -ts recent | grep raster2dymo`.
 3. **Image size = the PPD's ImageableArea, not the label size.** A full-label image (425 × 1046) is larger than the
    printable area and CUPS **tiles it over 2 × 2 pages** (journal: `xpages = 2x…`). Canvas = floor(area × 300) − 1 px:
-   tag 391 × 960, shipping 1199 × 1799; printed with `lp -o PageSize=… -o ppi=300 -o position=center`.
+   tag 298 × 962 (30252; 30321: 391 × 960), shipping 1199 × 1799; printed with `lp -o PageSize=… -o ppi=300 -o position=center`.
 4. **The 550 driver is bidirectional** (Fedora filter AND the Windows language monitor): before each page it sends
    `ESC A <n>` and waits for a 32-byte status. A dumb listener only ever gets those 3 bytes → "Printer is not ready"
    (Fedora) / job stuck "Printing" then Error (Windows). `tests/fake_labelwriter.py` answers it (byte 10 = 8, media OK;

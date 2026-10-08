@@ -9,7 +9,7 @@ Always say which level you reached (unit / render / browser / print pipeline wit
 
 1. **Unit** (no CUPS needed): `python3 -m unittest discover -s tests`
 2. **Render + barcode** (needs google-chrome, python3-pillow, zbar): `tests/render_check.sh` → asserts the tag image is
-   391 × 960 (the 30321 printable area) and the Code 128 decodes; look at `render-out/*-reading.png`.
+   298 × 962 (the 30252 printable area; `tests/render_check.sh 30321` → 391 × 960) and the Code 128 decodes; look at `render-out/*-reading.png`.
 3. **Browser** (needs google-chrome, Xvfb, node 22+): `tests/browser_check.sh` → real Chrome against a throwaway
    server: pdf.js opens tests/samples/ups-sample.pdf, the same PDF saved to Downloads opens by itself on the Shipping
    tab with the label found, and the page logs no errors. Run it after ANY change to app.js — unit tests can't see the
@@ -17,7 +17,7 @@ Always say which level you reached (unit / render / browser / print pipeline wit
 4. **Full print pipeline with a fake printer** — proves driver + SELinux + page size + the job reaching the "printer":
    ```bash
    python3 tests/fake_labelwriter.py /tmp/ldjobs &      # answers the DYMO status handshake; prints a line per job
-   sudo lpadmin -p Test-550 -E -v socket://127.0.0.1:9100 -m lw550t.ppd -o PageSize=w102h252
+   sudo lpadmin -p Test-550 -E -v socket://127.0.0.1:9100 -m lw550t.ppd -o PageSize=w79h252
    LABELDESK_TAG_QUEUE=Test-550 python3 server/app.py   # print from the UI, then look at /tmp/ldjobs/job1.pbm
    sudo lpadmin -x Test-550   # clean up
    ```

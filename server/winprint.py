@@ -6,7 +6,8 @@
   printer(printer) → {state, reasons, message, accepting}
   find() → {"tag": name, "ship": name}              the DYMO printers installed on this PC (550 Turbo / 5XL)
 
-Paper is chosen by DYMO's own paper names (DeviceCapabilities DC_PAPERNAMES): "30321 Large Address" for tags,
+Paper is chosen by DYMO's own paper names (DeviceCapabilities DC_PAPERNAMES): the tag stock's number ("30252",
+"30321") for tags,
 "1744907 4 in x 6 in" / "4 in x 6 in" for shipping. Nothing here runs on Linux — app.py picks cups or this module.
 """
 import ctypes
@@ -26,7 +27,7 @@ if sys.platform == "win32":
     gdi32.SetStretchBltMode.argtypes = [HDC, ctypes.c_int]
     gdi32.StretchDIBits.argtypes = [HDC] + [ctypes.c_int] * 8 + [ctypes.c_void_p, ctypes.c_void_p, wintypes.UINT, wintypes.DWORD]
 
-PAPER = {"tag": ("30321",), "ship": ("1744907", "4 in x 6 in", "4in x 6in", "4 x 6")}
+PAPER = {"tag": ("30252",), "ship": ("1744907", "4 in x 6 in", "4in x 6in", "4 x 6")}
 DPI = 300
 # GetDeviceCaps indexes
 HORZRES, VERTRES, LOGPIXELSX, LOGPIXELSY = 8, 10, 88, 90
@@ -79,7 +80,7 @@ def find():
     return {"tag": pick("550", "turbo") or pick("550"), "ship": pick("5xl"), "all": names}
 
 
-def _devmode(printer, kind, copies):
+def _devmode(printer, kind, copies, words=None):
     """The driver's DEVMODE with DYMO's paper for `kind`, portrait, `copies`. → (buffer, paper name)."""
     h = wintypes.HANDLE()
     _check(winspool.OpenPrinterW(printer, ctypes.byref(h), None), f"opening printer {printer!r}")
@@ -95,9 +96,10 @@ def _devmode(printer, kind, copies):
         ids = (wintypes.WORD * max(n, 1))()
         winspool.DeviceCapabilitiesW(printer, None, 2, ids, None)
         papers = [(names[i * 64:(i + 1) * 64].split("\0", 1)[0], ids[i]) for i in range(n)]
-        want = next(((nm, pid) for word in PAPER[kind] for nm, pid in papers if word.lower() in nm.lower()), None)
+        words = words or PAPER[kind]
+        want = next(((nm, pid) for word in words for nm, pid in papers if word.lower() in nm.lower()), None)
         if not want:
-            raise RuntimeError(f"{printer} has no {'30321' if kind == 'tag' else '4 × 6'} paper size — is it the right printer?")
+            raise RuntimeError(f"{printer} has no {words[0]} paper size — is it the right printer?")
         # DEVMODEW: dmDeviceName WCHAR[32] (64 bytes) + 4 WORDs → dmFields @72; then dmOrientation @76,
         # dmPaperSize @78, dmPaperLength @80, dmPaperWidth @82, dmScale @84, dmCopies @86
         DM_ORIENTATION, DM_PAPERSIZE, DM_COPIES = 0x1, 0x2, 0x100
@@ -112,10 +114,10 @@ def _devmode(printer, kind, copies):
         winspool.ClosePrinter(h)
 
 
-def submit(printer, kind, gray, copies=1, title="LabelDesk"):
+def submit(printer, kind, gray, copies=1, title="LabelDesk", paper=None):
     """Print one label. gray = (width, height, bytes: one 0-255 value per pixel, rows top-down) at 300 dpi."""
     w, h, pixels = gray
-    dm, paper = _devmode(printer, kind, copies)
+    dm, paper = _devmode(printer, kind, copies, paper)
     hdc = gdi32.CreateDCW("WINSPOOL", printer, None, dm)
     _check(hdc, f"opening {printer}")
     try:

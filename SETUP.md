@@ -37,6 +37,8 @@ clone (the driver and printers are already set up). History and settings are kep
 Delete the old folder afterwards.
 
 Open **LabelDesk** from the app menu (or http://127.0.0.1:8792). Then, once per PC:
+- **Tag labels:** Settings → **Tag labels** must match the roll in the 550 Turbo. The shop's roll is **30252**
+  (1⅛″ × 3½″, the default); choose 30321 only for 1.4″ labels. The wrong one prints text off the label's edge.
 - **Shop logo:** Settings → **Tag logo** → Choose logo… (PNG or JPEG). It's stored on this PC only and never goes into
   the repo; without one, tags print without a logo.
 - Print one tag; if it comes out upside down, tick "Rotate 180°" under the preview. If the top line is cut off, use the

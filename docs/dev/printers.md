@@ -7,7 +7,7 @@ Fedora 44 PC (same release as work) without the real printers; the first real pr
 ## The shop's printers and labels (facts — don't reinterpret)
 | Printer | Connection | Job | Stock | CUPS queue / page |
 |---|---|---|---|---|
-| DYMO LabelWriter **550 Turbo** | Ethernet | inventory tags | **30321 Large Address, 1.4" × 3.5"** (owner says "1.5 × 3.5"; confirm the roll number) | `Dymo-550-Turbo` / `w102h252` |
+| DYMO LabelWriter **550 Turbo** | Ethernet | inventory tags | **30252 Address, 1-1/8" × 3-1/2"** (measured 2026-10-08; 30321 selectable in Settings) | `Dymo-550-Turbo` / `w79h252` |
 | DYMO LabelWriter **5XL** | Ethernet | shipping labels (mostly UPS) | 1744907, 4" × 6" | `Dymo-5XL` / `1744907_4_in_x_6_in` |
 
 - **Inventory tag** = three typed lines: customer name · `Received: MM/DD/YYYY` · `Ticket#: 75013`. Everything is typed

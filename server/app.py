@@ -9,7 +9,8 @@ for new labels (inbox.py: Downloads + the
 "Shipping Label (LabelDesk)" print-dialog printer).
 
 Printers are CUPS queues set up by tools/add-printers.sh (DYMO's official 550-series driver, tools/install-driver.sh):
-  tag      → LabelWriter 550 Turbo, 30321 Large Address (1.4" × 3.5"), page "w102h252"
+  tag      → LabelWriter 550 Turbo, 30252 Address (1-1/8" × 3-1/2", page "w79h252") — or 30321 Large Address
+             (1.4" × 3.5", page "w102h252"), chosen in Settings (config tag_label)
   shipping → LabelWriter 5XL, 4" × 6" (1744907), page "1744907_4_in_x_6_in"
 Config: environment or ~/.config/labeldesk/config.json {"tag_queue", "ship_queue", "bind", "port", "flip_tag", "tag_offset_mm",
 "watch_downloads"}.
@@ -75,10 +76,16 @@ MAX_BODY = 25 * 1024 * 1024          # a pasted screenshot or PDF
 MAX_LOGO = 2 * 1024 * 1024
 KEEP_SHIP_IMAGES = 200               # shipping labels kept for reprint
 
-# the two label kinds the shop prints — page names from DYMO's lw550t.ppd / lw5xl.ppd
+# the label kinds the shop prints — page names, sizes and printable areas (ImageableArea) from DYMO's lw550t.ppd / lw5xl.ppd
+TAG_STOCKS = {
+    "30252": {"name": "Inventory tag", "stock": "30252 Address", "size": "1-1/8\" × 3-1/2\"", "page": "w79h252",
+              "width_in": 79 / 72, "height_in": 252 / 72, "safe_in": [4.32 / 72, 4.32 / 72, 76.08 / 72, 235.44 / 72]},
+    "30321": {"name": "Inventory tag", "stock": "30321 Large Address", "size": "1.4\" × 3.5\"", "page": "w102h252",
+              "width_in": 102 / 72, "height_in": 251 / 72, "safe_in": [4.32 / 72, 3.84 / 72, 98.40 / 72, 234.48 / 72]},
+}
+DEFAULT_TAG_STOCK = "30252"          # the shop's roll, measured 2026-10-08 (1-1/8" × 3-1/2")
 LABELS = {
-    "tag": {"name": "Inventory tag", "stock": "30321 Large Address", "page": "w102h252",
-            "width_in": 102 / 72, "height_in": 251 / 72, "safe_in": [4.32 / 72, 3.84 / 72, 98.40 / 72, 234.48 / 72]},
+    "tag": TAG_STOCKS[DEFAULT_TAG_STOCK],
     "ship": {"name": "Shipping label", "stock": "1744907 4 × 6", "page": "1744907_4_in_x_6_in",
              "width_in": 296 / 72, "height_in": 452 / 72, "safe_in": [4.08 / 72, 4.08 / 72, 292.08 / 72, 436.08 / 72]},
 }
@@ -86,7 +93,8 @@ LABELS = {
 
 def config():
     c = {"tag_queue": "Dymo-550-Turbo", "ship_queue": "Dymo-5XL", "bind": "127.0.0.1", "port": 8792, "flip_tag": False, "tag_offset_mm": 0,
-         "watch_downloads": True, "update_check": True, "update_url": UPDATE_URL, "tag_logo": ""}
+         "watch_downloads": True, "update_check": True, "update_url": UPDATE_URL, "tag_logo": "",
+         "tag_label": DEFAULT_TAG_STOCK}
     try:
         with open(CONF_FILE) as f:
             c.update(json.load(f))
@@ -212,7 +220,9 @@ def submit(kind, png_bytes, copies, gray=None):
                                "or Windows Settings → Printers")
         if not gray:
             raise ValueError("the Windows version needs the label as grey pixels (update LabelDesk)")
-        job, _paper = winprint.submit(printer, kind, gray, copies, f"LabelDesk {LABELS[kind]['name']}")
+        lab = labels()[kind]
+        job, _paper = winprint.submit(printer, kind, gray, copies, f"LabelDesk {lab['name']}",
+                                      paper=(lab["stock"].split()[0],) if kind == "tag" else None)
         return printer, job
     return lp(kind, png_bytes, copies)
 
@@ -224,8 +234,9 @@ def lp(kind, png_bytes, copies):
         f.write(png_bytes)
         path = f.name
     try:
-        r = subprocess.run(["lp", "-d", queue, "-n", str(copies), "-t", f"LabelDesk {LABELS[kind]['name']}",
-                            "-o", f"PageSize={LABELS[kind]['page']}", "-o", "ppi=300", "-o", "position=center",
+        lab = labels()[kind]
+        r = subprocess.run(["lp", "-d", queue, "-n", str(copies), "-t", f"LabelDesk {lab['name']}",
+                            "-o", f"PageSize={lab['page']}", "-o", "ppi=300", "-o", "position=center",
                             path], capture_output=True, text=True, timeout=30)
     finally:
         os.unlink(path)
@@ -370,6 +381,27 @@ def check_update(cfg=None, now=None):
         res["error"] = str(e)[:200]
     _update.update(at=now, result=res)
     return res
+
+
+def labels(cfg=None):
+    """The label kinds with the tag stock this PC is set to (Settings → Tag labels; config tag_label)."""
+    stock = str((cfg or config()).get("tag_label") or DEFAULT_TAG_STOCK)
+    return {**LABELS, "tag": TAG_STOCKS.get(stock, TAG_STOCKS[DEFAULT_TAG_STOCK])}
+
+
+def save_config(**changes):
+    """Merge `changes` into config.json (keeps everything else in it)."""
+    try:
+        with open(CONF_FILE) as f:
+            cur = json.load(f)
+    except (OSError, ValueError):
+        cur = {}
+    cur.update(changes)
+    os.makedirs(CONF_DIR, exist_ok=True)
+    tmp = CONF_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(cur, f, indent=2)
+    os.replace(tmp, CONF_FILE)
 
 
 # ---- the shop's logo on the built-in tag: kept per PC (config folder), never in the repo -------------------------------
@@ -677,7 +709,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/config":
                 cfg = config()
-                return self.send_json({"version": VERSION, "labels": LABELS, "flipTag": cfg["flip_tag"], "tagOffsetMm": float(cfg.get("tag_offset_mm") or 0),
+                return self.send_json({"version": VERSION, "labels": labels(cfg), "tagStocks": TAG_STOCKS,
+                                       "tagLabel": labels(cfg)["tag"]["stock"].split()[0], "flipTag": cfg["flip_tag"], "tagOffsetMm": float(cfg.get("tag_offset_mm") or 0),
                                        "barcodeCheck": barcode.available(), "platform": "windows" if WINDOWS else "linux"})
             if path == "/api/printers":
                 return self.send_json(printers())
@@ -804,6 +837,12 @@ class Handler(BaseHTTPRequestHandler):
                 _cw_check.clear()
                 keys.clear()
                 return self.send_json(cw_status())
+            if path == "/api/settings/tag-label":            # Settings → Tag labels: {label: "30252" | "30321"}
+                stock = str(b.get("label") or "")
+                if stock not in TAG_STOCKS:
+                    raise ValueError("label must be one of " + ", ".join(TAG_STOCKS))
+                save_config(tag_label=stock)
+                return self.send_json({"ok": True, "labels": labels()})
             if path == "/api/logo":                          # Settings → Tag logo: {png: data URL}
                 save_logo(b.get("png") or "")
                 return self.send_json({"ok": True})

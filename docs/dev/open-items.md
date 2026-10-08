@@ -5,8 +5,9 @@
       if the port doesn't answer.) If 9100 doesn't work, check the printer's web page / `avahi-browse -rt _ipp._tcp` for IPP.
 - [ ] First real tag: text direction vs feed — if upside down, tick "Rotate 180°" (stored per browser) or set
       `flip_tag` in config.json.
-- [ ] Confirm the tag roll is 30321 (1.4 × 3.5). If it's another size, add it to `LABELS` in server/app.py from the PPD
-      (`*PageSize` + `*ImageableArea` lines in /usr/share/cups/model/lw550t.ppd*).
+- [x] Tag roll confirmed 2026-10-08: **30252 Address, 1-1/8" × 3-1/2"**. On 0.7.0 (30321 layout) the top line printed off the
+      label's edge. 0.7.1 adds 30252 (PPD w79h252, ImageableArea 4.32 4.32 76.08 235.44 → 298×962) as the default; 30321
+      stays in Settings → Tag labels. Rendered + barcodes checked headless; NOT yet printed on the real roll.
 - [ ] Match the tag to the owner's existing `.dymo` template (`Asset Tag.dymo`, seen 2026-10-01 on a Windows PC at work):
       LabelName **Address** (= 30252, 1-1/8" × 3-1/2", NOT 30321 — confirm the roll), Landscape, printable rect
       0.23/0.06 + 3.21 × 0.997 in. Objects (Segoe UI, none bold, left): customer name 20.7 pt AlwaysFit · "Date Recieved:"

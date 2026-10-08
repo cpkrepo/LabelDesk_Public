@@ -10,7 +10,9 @@ install/update/printer steps). License MIT. Version tags (v*) trigger .github/wo
 the Windows app's "Install update" uses.
 
 ## Printers (facts — don't reinterpret)
-- 550 Turbo (Ethernet): inventory tags, 30321 1.4"×3.5" (confirm roll) — queue `Dymo-550-Turbo`, page `w102h252`.
+- 550 Turbo (Ethernet): inventory tags on **30252 Address, 1-1/8"×3-1/2"** (the shop's roll, measured 2026-10-08) — page
+  `w79h252`, canvas 298×962. 30321 Large Address (1.4"×3.5", `w102h252`, 391×960) is selectable in Settings → Tag labels
+  (config `tag_label`). Queue `Dymo-550-Turbo`. drawTag scales its sizes by label height (k = height/391).
   Tag = company/customer · `Received: MM/DD/YYYY` · `Ticket#: …`, optional Code 128, shop logo bottom-right (built-in layout).
   Blank tag: click the preview, type (fields `{free: text}`). The logo is PER PC (config folder, Settings → Tag logo, /api/logo)
   and must never be added to the repo.

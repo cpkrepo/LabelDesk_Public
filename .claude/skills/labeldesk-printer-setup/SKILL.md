@@ -10,7 +10,7 @@ description: Install DYMO's 550-series CUPS driver and LabelDesk's printer queue
    `lw550t.ppd`, `lw5xl.ppd`, and the SELinux module `dymo_cups`. Needs internet (GitHub) and sudo.
 2. Find the printer IPs: `avahi-browse -rtp _pdl-datastream._tcp | grep -i dymo`, the router's DHCP list, or the
    printer's network status (the 550 series prints/shows it). Give them fixed IPs (DHCP reservation) if possible.
-3. `tools/add-printers.sh <550T-ip> <5XL-ip>` — queues `Dymo-550-Turbo` (page w102h252) and `Dymo-5XL`
+3. `tools/add-printers.sh <550T-ip> <5XL-ip>` — queues `Dymo-550-Turbo` (default page w79h252 = 30252; LabelDesk sets the page on each print) and `Dymo-5XL`
    (page 1744907_4_in_x_6_in) on `socket://IP:9100`. It warns if port 9100 doesn't answer.
 4. `tools/install-app.sh` — service + app-menu entry; open http://127.0.0.1:8792.
 5. Print one tag, check direction (Rotate 180° if needed), then one shipping label.
@@ -25,9 +25,10 @@ timeout 3 bash -c "echo > /dev/tcp/<ip>/9100" && echo port-open
 | Symptom | Cause | Fix |
 |---|---|---|
 | "Unable to get synchronization lock: Permission denied" | SELinux blocks /dev/shm semaphore | reinstall `tools/selinux/dymo_cups.te` (install-driver.sh does it); add any newly denied permission shown by ausearch |
-| Label printed at half size / spread over several labels; journal `xpages = 2x…` | image bigger than the PPD ImageableArea → CUPS tiles | canvas must be floor(area × 300) − 1 px (tag 391×960, ship 1199×1799); never full-label size |
+| Label printed at half size / spread over several labels; journal `xpages = 2x…` | image bigger than the PPD ImageableArea → CUPS tiles | canvas must be floor(area × 300) − 1 px (tag 298×962 on 30252 / 391×960 on 30321, ship 1199×1799); never full-label size |
 | "Printer is not ready" / "ReadStatus TIMEOUT" | driver's status handshake got no reply | real printer: check IP/port/power, labels loaded, genuine DYMO roll (NFC chip). With a fake listener this is expected |
 | `lp: The printer or class does not exist` | queue missing / different name | run add-printers.sh, or set tag_queue/ship_queue in ~/.config/labeldesk/config.json |
+| Tag text runs off one long edge | LabelDesk set to the wrong roll (30321 layout on 30252 labels) | Settings → Tag labels → the roll's number (measure: 1⅛″ = 30252, 1.4″ = 30321) |
 | Tag upside down | feed direction | "Rotate 180°" under the preview (per browser) or `"flip_tag": true` in config.json |
 | Blank label / nothing on a non-DYMO roll | 550 series refuses non-genuine labels | use DYMO labels |
 

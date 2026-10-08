@@ -2,7 +2,7 @@
 
 Print DYMO labels from **Fedora** or **Windows 11**: a replacement for DYMO Connect built for a repair shop.
 
-- **Inventory tags** on the LabelWriter **550 Turbo** (30321, 1.4" × 3.5"): type the ticket # (with **ConnectWise**
+- **Inventory tags** on the LabelWriter **550 Turbo** (30252 Address, 1⅛″ × 3½″; 30321 Large Address in Settings): type the ticket # (with **ConnectWise**
   connected, the company and customer name fill in; setup for the admin in `docs/connectwise-setup.md`), optional
   barcode of the ticket number, Enter to print, batch printing, reprint from history. Or import your own DYMO Connect
   `.dymo` tag template (Layout → Import .dymo…; pictures in it print too). **Blank tag:** click the preview and type
