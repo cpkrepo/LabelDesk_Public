@@ -1,0 +1,13 @@
+# SELinux: let CUPS filters create the shared-memory semaphore DYMO's 550-series filter (raster2dymolw_v2) uses as a
+# print lock — boost::interprocess::named_mutex → /dev/shm/sem.* (tmpfs_t). Without it every job fails with
+# "Unable to get synchronization lock: Permission denied" (AVC: cupsd_t create tmpfs_t file). Installed by
+# tools/install-driver.sh; remove with: sudo semodule -r dymo_cups
+module dymo_cups 1.1;
+
+require {
+    type cupsd_t;
+    type tmpfs_t;
+    class file { create open read write unlink getattr map lock link rename setattr };
+}
+
+allow cupsd_t tmpfs_t:file { create open read write unlink getattr map lock link rename setattr };

@@ -1,0 +1,33 @@
+# Builds the Windows installer for every version tag that tools/update.sh pushes (v0.6.1, v0.7.0, …) and attaches
+# LabelDesk-<version>.msi + .sha256 to that GitHub release. LabelDesk on Windows offers it after the next print
+# ("Install update") and checks the .sha256 before installing.
+name: Windows installer
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}          # Actions tab → Run workflow: rebuild the current VERSION by hand
+permissions:
+  contents: write                # create the release, upload the files
+concurrency:
+  group: windows-installer-${{ github.ref }}
+jobs:
+  msi:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag and VERSION agree
+        if: github.event_name == 'push'
+        run: test "v$(tr -d '[:space:]' < VERSION)" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME but VERSION says $(cat VERSION)"; exit 1; }
+      - name: Build tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq wixl msitools librsvg2-bin imagemagick rsync unzip
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests -q
+      - name: Build the MSI
+        run: tools/build-windows.sh
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=$(tr -d '[:space:]' < VERSION)
+          gh release view "v$v" >/dev/null 2>&1 || gh release create "v$v" --verify-tag --title "LabelDesk $v" --notes "LabelDesk $v"
+          gh release upload "v$v" "dist/LabelDesk-$v.msi" "dist/LabelDesk-$v.msi.sha256" --clobber

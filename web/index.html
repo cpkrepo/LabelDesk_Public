@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LabelDesk</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="brand"><img src="icon.svg" alt=""><span>LabelDesk</span></div>
+  <nav>
+    <button data-tab="tag" class="on">Inventory tag</button>
+    <button data-tab="ship">Shipping label</button>
+    <button data-tab="history">History</button>
+    <button data-tab="settings">Settings</button>
+  </nav>
+  <div class="printers" id="printers"></div>
+</header>
+
+<main>
+  <!-- ================= inventory tag (550 Turbo, 30321) ================= -->
+  <section id="tab-tag" class="tab">
+    <div class="split">
+      <form id="tag-form" class="card" autocomplete="off">
+        <h2>Inventory tag <small>30321 · 1.4″ × 3.5″ · LabelWriter 550 Turbo</small></h2>
+        <div class="row">
+          <label>Ticket #<input name="ticket" required inputmode="numeric" autofocus autocomplete="off"></label>
+          <label>Date received<input name="received" type="date" required></label>
+        </div>
+        <div id="cw-info" class="cwinfo" hidden></div>
+        <label>Company<input name="customer" required list="customers"></label>
+        <datalist id="customers"></datalist>
+        <div class="row">
+          <label>Customer name <small>(optional)</small><input name="contact" autocomplete="off"></label>
+          <label class="check contactcheck"><input type="checkbox" name="showContact"> On the tag</label>
+        </div>
+        <div class="row">
+          <label class="check"><input type="checkbox" name="barcode"> Barcode of the ticket #</label>
+          <label class="copies">Copies<input name="copies" type="number" min="1" max="99" value="1"></label>
+        </div>
+        <div class="row actions">
+          <button class="primary" type="submit">Print <kbd>Enter</kbd></button>
+          <button type="button" id="tag-again" class="ghost" title="Reprint the last tag">Print again <kbd>Ctrl</kbd><kbd>R</kbd></button>
+          <button type="button" id="tag-batch-open" class="ghost">Batch…</button>
+        </div>
+        <p class="hint">Type the ticket # and company<span id="cw-hint" hidden> — the company and customer fill in from
+          ConnectWise</span>. After printing, the form clears for the next device; the date stays. Companies used before are
+          suggested as you type.</p>
+      </form>
+      <div class="card preview">
+        <h3>Preview <small>exactly what prints</small></h3>
+        <canvas id="tag-canvas" title="Click to type a blank tag"></canvas>
+        <p class="hint">Click the preview to type a blank tag (any text, no ticket).</p>
+        <div id="free-panel" class="freepanel" hidden>
+          <label>Blank tag <small>one line per row · Ctrl+Enter prints · Esc goes back</small>
+            <textarea id="free-text" rows="3" spellcheck="false"></textarea></label>
+          <div class="row actions">
+            <button class="primary" type="button" id="free-print">Print blank tag <kbd>Ctrl</kbd><kbd>Enter</kbd></button>
+            <button class="ghost" type="button" id="free-close">Back to ticket tag</button>
+          </div>
+        </div>
+        <label class="check hint"><input type="checkbox" id="flip"> Rotate 180° (if tags come out upside down)</label>
+        <div class="hint offset">Text position <small>(if the top or bottom line gets cut off)</small>
+          <button type="button" class="ghost" id="offset-up" title="Move the text up 0.25 mm">↑</button>
+          <span id="offset-val">0.00 mm</span>
+          <button type="button" class="ghost" id="offset-down" title="Move the text down 0.25 mm">↓</button>
+          <button type="button" class="ghost" id="offset-reset" title="Back to the default">Reset</button></div>
+        <div class="hint tplrow">Layout <select id="tpl-select"><option value="">Built-in</option></select>
+          <button type="button" class="ghost" id="tpl-import" title="Use a DYMO Connect template — or drop the .dymo file on this card">Import .dymo…</button>
+          <input type="file" id="tpl-file" accept=".dymo,.xml" hidden>
+          <button type="button" class="ghost" id="tpl-edit" hidden>Fields…</button>
+          <button type="button" class="ghost" id="tpl-delete" hidden>Delete</button></div>
+        <div id="tpl-panel" class="tplpanel" hidden></div>
+      </div>
+    </div>
+    <div id="tag-batch" class="card" hidden>
+      <h2>Batch <small>one device per line: <code>Customer, Ticket #</code> — all with the date above</small></h2>
+      <textarea id="batch-text" rows="8" placeholder="Acme Dental, 75013&#10;Jane Smith, 75014"></textarea>
+      <div class="row actions"><button class="primary" id="batch-print">Print all</button><span id="batch-status" class="hint"></span></div>
+    </div>
+  </section>
+
+  <!-- ================= shipping label (5XL, 4×6) ================= -->
+  <section id="tab-ship" class="tab" hidden>
+    <div class="split">
+      <div class="card">
+        <h2>Shipping label <small>4″ × 6″ · LabelWriter 5XL</small></h2>
+        <div id="drop" class="drop" tabindex="0">
+          <b>Paste</b> a screenshot (<kbd>Ctrl</kbd>+<kbd>V</kbd>), <b>drop</b> an image or PDF here, or
+          <button type="button" id="ship-open" class="linkish">open a file</button>
+          <input type="file" id="ship-file" accept="image/*,application/pdf" hidden>
+        </div>
+        <div id="src-wrap" hidden>
+          <canvas id="src-canvas" title="Drag to draw the label area"></canvas>
+          <div class="row tools">
+            <button type="button" class="ghost" id="find-label">Find label</button>
+            <button type="button" class="ghost" id="whole-image">Whole image</button>
+            <span class="grow"></span>
+            <button type="button" class="ghost" id="rot-left" title="Rotate left">↺ 90°</button>
+            <button type="button" class="ghost" id="rot-right" title="Rotate right">↻ 90°</button>
+            <button type="button" class="ghost" id="rot-180">180°</button>
+          </div>
+          <p class="hint" id="crop-note"></p>
+        </div>
+        <div class="row">
+          <label class="copies">Copies<input id="ship-copies" type="number" min="1" max="99" value="1"></label>
+        </div>
+        <div class="row actions"><button class="primary" id="ship-print" disabled>Print <kbd>Enter</kbd></button>
+          <button class="ghost" id="ship-clear" disabled>Clear</button></div>
+        <p class="hint" id="ship-note">UPS / FedEx: paste a screenshot, or drop the label PDF — the whole page is fine.</p>
+        <p class="hint">Labels saved to <b>Downloads</b> or printed to <b>Shipping Label (LabelDesk)</b> from any app open here by themselves.</p>
+      </div>
+      <div class="card preview">
+        <h3>Preview <small>4 × 6 at 300 dpi</small></h3>
+        <canvas id="ship-canvas"></canvas>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= settings ================= -->
+  <section id="tab-settings" class="tab" hidden>
+    <div class="card narrow">
+      <h2>LabelDesk <small id="about-version"></small></h2>
+      <p class="hint">Runs entirely on this computer: the app only answers on this PC (127.0.0.1) and prints straight to the
+        DYMO printers. The only things it sends over the internet are a version check to GitHub after printing
+        (it asks for the newest version number; nothing about your labels)<span id="about-cw"></span>.
+        <span id="about-update"></span></p>
+      <h2>Tag logo</h2>
+      <p class="hint" id="logo-state"></p>
+      <p class="hint">Your shop's logo, bottom right of the built-in tag (PNG or JPEG; black and white prints best). It's
+        kept on this PC only.</p>
+      <div class="row actions">
+        <button class="ghost" type="button" id="logo-pick">Choose logo…</button>
+        <input type="file" id="logo-file" accept="image/png,image/jpeg" hidden>
+        <button class="ghost" type="button" id="logo-clear" hidden>Remove</button>
+      </div>
+      <div id="win-dymo" hidden>
+        <h2>DYMO printers by IP</h2>
+        <p class="hint">If DYMO Connect or Windows can't find the printers (often on Wi-Fi), check them here first; the
+          check changes nothing. Add only works when the check says <b>tcp 9100: open</b>. Needs an administrator.</p>
+        <div class="row">
+          <label>550 Turbo IP<input id="dymo-ip-550" inputmode="decimal" placeholder="e.g. 192.0.2.10"></label>
+          <label>5XL IP<input id="dymo-ip-5xl" inputmode="decimal" placeholder="e.g. 192.0.2.11"></label>
+        </div>
+        <div class="row actions">
+          <button class="ghost" type="button" id="dymo-check">Check</button>
+          <button class="ghost" type="button" id="dymo-add-550">Add 550 Turbo</button>
+          <button class="ghost" type="button" id="dymo-add-5xl">Add 5XL</button>
+        </div>
+        <pre id="dymo-out" class="checkout" hidden></pre>
+      </div>
+      <div id="win-printer" hidden>
+        <h2>Shipping Label printer</h2>
+        <p class="hint">Adds <b>Shipping Label (LabelDesk)</b> to this PC's printers: print a UPS / FedEx label page to it
+          from the browser and it opens here, ready for the 5XL. Needs an administrator (Windows will ask).</p>
+        <button class="ghost" type="button" id="win-add-printer">Add the Shipping Label printer</button>
+      </div>
+    </div>
+    <div class="card narrow" id="cw-card" hidden>
+      <h2>ConnectWise <small>optional · read-only ticket lookup</small></h2>
+      <p class="hint" id="cw-state">Not connected.</p>
+      <form id="cw-form" autocomplete="off">
+        <div class="row">
+          <label>Company ID<input name="company" placeholder="as on the ConnectWise login screen"></label>
+          <label>Client ID<input name="client_id" placeholder="from developer.connectwise.com"></label>
+        </div>
+        <div class="row">
+          <label>Public key<input name="public"></label>
+          <label>Private key<input name="private" type="password" autocomplete="new-password"></label>
+        </div>
+        <div class="row actions">
+          <button class="primary" type="submit">Save</button>
+          <button class="ghost" type="button" id="cw-test">Test connection</button>
+          <span class="grow"></span>
+          <button class="ghost" type="button" id="cw-clear">Remove from this PC</button>
+        </div>
+      </form>
+      <ul id="cw-checks" class="checks"></ul>
+      <p class="hint">The keys come from your ConnectWise admin — see <b>docs/connectwise-setup.md</b>. They're kept in
+        this PC's keyring, only used to <i>read</i> tickets, and never leave this computer except to ConnectWise.</p>
+    </div>
+  </section>
+
+  <!-- ================= history ================= -->
+  <section id="tab-history" class="tab" hidden>
+    <div class="card">
+      <h2>Printed <small>last 60</small></h2>
+      <input id="hist-filter" placeholder="Filter by customer or ticket…">
+      <table id="history"><thead><tr><th>When</th><th>Label</th><th>Details</th><th>Copies</th><th>Printed</th><th></th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+</main>
+<div id="jobbar" hidden><span class="msg"></span><span class="acts"></span></div>
+<div id="updatebar" hidden><span class="msg"></span><span class="acts"></span></div>
+<div id="toast" hidden></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

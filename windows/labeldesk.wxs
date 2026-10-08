@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- LabelDesk for Windows — per-user MSI built on Fedora with wixl (tools/build-windows.sh). No admin rights needed.
+     Files: %LOCALAPPDATA%\Programs\LabelDesk · Data (history, settings, log): %LOCALAPPDATA%\LabelDesk and
+     %APPDATA%\LabelDesk — kept on uninstall. UpgradeCode is fixed forever: a newer MSI replaces an older one. -->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="LabelDesk" Version="@VERSION@" Manufacturer="LabelDesk" Language="1033"
+           UpgradeCode="6B9C2E31-4A57-4D3F-9E1B-2F7C5A0D8E41">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perUser" InstallPrivileges="limited"
+             Description="LabelDesk — DYMO label printing" Comments="Inventory tags and shipping labels on DYMO LabelWriters"/>
+    <Property Id="ALLUSERS" Value="2"/>
+    <Property Id="MSIINSTALLPERUSER" Value="1"/>
+    <Media Id="1" Cabinet="labeldesk.cab" EmbedCab="yes"/>
+    <Icon Id="LabelDeskIcon" SourceFile="$(var.Src)/icon.ico"/>
+    <Property Id="ARPPRODUCTICON" Value="LabelDeskIcon"/>
+
+    <Upgrade Id="6B9C2E31-4A57-4D3F-9E1B-2F7C5A0D8E41">
+      <UpgradeVersion Minimum="0.0.0" Maximum="@VERSION@" IncludeMaximum="no" Property="OLDER_FOUND"/>
+      <UpgradeVersion Minimum="@VERSION@" IncludeMinimum="no" OnlyDetect="yes" Property="NEWER_FOUND"/>
+    </Upgrade>
+    <InstallExecuteSequence>
+      <RemoveExistingProducts After="InstallInitialize"/>
+    </InstallExecuteSequence>
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="LocalAppDataFolder">
+        <Directory Id="ProgramsDir" Name="Programs">
+          <Directory Id="INSTALLDIR" Name="LabelDesk"/>
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder"/>
+      <Directory Id="StartupFolder"/>
+    </Directory>
+
+    <DirectoryRef Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut" Guid="3E0F2A61-9C4B-4E7A-8D21-5B6C7F9A0E12">
+        <Shortcut Id="LabelDeskStart" Name="LabelDesk" Description="Print inventory tags and shipping labels"
+                  Target="[INSTALLDIR]python\pythonw.exe" Arguments="&quot;[INSTALLDIR]LabelDesk.pyw&quot;"
+                  WorkingDirectory="INSTALLDIR" Icon="LabelDeskIcon"/>
+        <RegistryValue Root="HKCU" Key="Software\LabelDesk" Name="startmenu" Type="integer" Value="1" KeyPath="yes"/>
+      </Component>
+    </DirectoryRef>
+    <DirectoryRef Id="StartupFolder">
+      <Component Id="StartupShortcut" Guid="8A4D1C73-2B5E-4F90-A6C3-1D7E9B2F4A58">
+        <Shortcut Id="LabelDeskStartup" Name="LabelDesk (background)" Description="LabelDesk's print server"
+                  Target="[INSTALLDIR]python\pythonw.exe" Arguments="&quot;[INSTALLDIR]labeldesk-server.pyw&quot;"
+                  WorkingDirectory="INSTALLDIR" Icon="LabelDeskIcon"/>
+        <RegistryValue Root="HKCU" Key="Software\LabelDesk" Name="startup" Type="integer" Value="1" KeyPath="yes"/>
+      </Component>
+    </DirectoryRef>
+    <DirectoryRef Id="INSTALLDIR">
+      <Component Id="InstallDirKey" Guid="C5B7E2D9-6F14-4A83-B0E6-9D2A7C4F1B36">
+        <RegistryValue Root="HKCU" Key="Software\LabelDesk" Name="installdir" Type="string" Value="[INSTALLDIR]" KeyPath="yes"/>
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="Main" Title="LabelDesk" Level="1">
+      <ComponentGroupRef Id="AppFiles"/>
+      <ComponentRef Id="StartMenuShortcut"/>
+      <ComponentRef Id="StartupShortcut"/>
+      <ComponentRef Id="InstallDirKey"/>
+    </Feature>
+  </Product>
+</Wix>

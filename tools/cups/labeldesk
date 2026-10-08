@@ -1,0 +1,18 @@
+#!/bin/sh
+# CUPS backend for the "Shipping Label (LabelDesk)" printer: whatever an app prints to it (a carrier's label page from
+# the browser's print dialog) is dropped into /var/spool/labeldesk, where LabelDesk picks it up, finds the label,
+# turns it upright and shows it ready to print on the 5XL. Installed by tools/add-printers.sh.
+SPOOL=/var/spool/labeldesk
+if [ $# -eq 0 ]; then                                    # device discovery
+  echo 'direct labeldesk:/ "LabelDesk" "Shipping Label (LabelDesk)"'
+  exit 0
+fi
+[ $# -ge 5 ] || { echo "ERROR: usage: labeldesk job user title copies options [file]" >&2; exit 1; }
+job=$1
+out="$SPOOL/job-$(date +%Y%m%d-%H%M%S)-$job.pdf"
+tmp="$SPOOL/.incoming-$job"
+if [ -n "$6" ]; then cat "$6" > "$tmp"; else cat > "$tmp"; fi || { echo "ERROR: can't write to $SPOOL" >&2; exit 1; }
+chmod 0644 "$tmp" && mv "$tmp" "$out"
+find "$SPOOL" -maxdepth 1 -name 'job-*' -mtime +7 -delete 2>/dev/null   # keep a week
+echo "INFO: handed to LabelDesk: $out" >&2
+exit 0

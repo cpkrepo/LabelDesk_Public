@@ -1,0 +1,19 @@
+Subject: LabelDesk – new way to print our DYMO labels
+
+Hi all,
+
+LabelDesk is a simple app for printing our DYMO labels: inventory tags on the 550 Turbo and 4x6 shipping
+labels on the 5XL (paste a screenshot or drop the UPS/FedEx PDF – it finds the label, turns it upright and
+sizes it). What you see on screen is exactly what prints.
+
+It runs entirely on your own PC and prints straight to the printers – no server, and nothing about your labels is sent anywhere.
+
+Download:
+[download link]
+
+- Windows: download LabelDesk-0.5.0-Windows.zip (DYMO Connect must already be installed – it uses the same driver).
+- Fedora: download LabelDesk-0.5.0-Fedora.zip to your Downloads folder.
+
+Each zip has a "How to install" file inside; it takes a couple of minutes. Let me know if anything doesn't print.
+
+Thanks,
