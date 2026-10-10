@@ -71,6 +71,7 @@ UPDATE_URL = f"https://raw.githubusercontent.com/{REPO}/main/VERSION"
 RELEASES_URL = f"https://github.com/{REPO}/releases"
 RELEASE_API = f"https://api.github.com/repos/{REPO}/releases/tags/v{{version}}"
 RELEASES_API = f"https://api.github.com/repos/{REPO}/releases?per_page=40"
+UPGRADE_CODE = "{6B9C2E31-4A57-4D3F-9E1B-2F7C5A0D8E41}"         # windows/labeldesk.wxs — fixed forever
 WEB = os.path.realpath(os.environ.get("LABELDESK_WEB") or os.path.join(HERE, "..", "web"))
 if WINDOWS:
     CONF_FILE = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "LabelDesk", "config.json")
@@ -658,18 +659,25 @@ def install_windows_version(version):
     server = os.path.join(ROOT, "labeldesk-server.pyw")
     log = os.path.join(work, "install.log")
     older = version_tuple(version) < version_tuple(VERSION)
-    remove = ("Get-ChildItem HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall,"
-              "HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall -ErrorAction SilentlyContinue | Get-ItemProperty | "
-              "Where-Object { $_.DisplayName -eq 'LabelDesk' } | ForEach-Object { Start-Process msiexec.exe "
-              "-ArgumentList '/x',$_.PSChildName,'/qb' -Wait }; ") if older else ""
+    # Windows Installer's own list of LabelDesk installs (by the fixed UpgradeCode in windows/labeldesk.wxs) — per-user
+    # MSIs aren't in the Uninstall registry key (found on the test VM)
+    remove = ("$wi = New-Object -ComObject WindowsInstaller.Installer; "
+              f"foreach ($c in @($wi.RelatedProducts('{UPGRADE_CODE}'))) "
+              "{ Start-Process msiexec.exe -ArgumentList '/x',$c,'/qb' -Wait }; ") if older else ""
     ps = (f"Wait-Process -Id {os.getpid()} -Timeout 60 -ErrorAction SilentlyContinue; {remove}"
           f"$p = Start-Process msiexec.exe -ArgumentList '/i','\"{msi_path}\"','/qb','/l*v','\"{log}\"' -Wait -PassThru; "
           f"Start-Process '{pythonw}' -ArgumentList '\"{server}\"'; exit $p.ExitCode")
     script = os.path.join(work, "install-update.ps1")
     with open(script, "w", encoding="utf-8") as f:
         f.write(ps + "\n")
-    subprocess.Popen(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", script],
-                     creationflags=0x00000008 | 0x00000200, close_fds=True)   # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    args = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", script]
+    # CREATE_NO_WINDOW (a hidden console — PowerShell started DETACHED_PROCESS, i.e. with no console, quits at once:
+    # "Install update" never ran that way, found on the test VM 2026-10-10) | CREATE_NEW_PROCESS_GROUP |
+    # CREATE_BREAKAWAY_FROM_JOB (outlive LabelDesk even if it was started inside a job, e.g. by a scheduled task)
+    try:
+        subprocess.Popen(args, creationflags=0x08000000 | 0x00000200 | 0x01000000, close_fds=True)
+    except OSError:                                                      # the job doesn't allow breaking away
+        subprocess.Popen(args, creationflags=0x08000000 | 0x00000200, close_fds=True)
     threading.Timer(1.0, lambda: os._exit(0)).start()                   # let the reply go out, then free the files
 
 

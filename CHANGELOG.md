@@ -17,6 +17,9 @@ the owner's `tools/update.sh` turns that heading into the version number when it
 - **Settings → Version:** every published version, with what changed in each. **Use this version** puts this PC on
   it — automatically, on Windows, Mac and Fedora — and keeps it there until **Back to the newest version**. On the
   owner's PC a "for every PC" box publishes it as the next version instead, so every PC goes back.
+- **Windows: updating works again.** Installing a newer version over an older one could leave LabelDesk without its
+  Python (it wouldn't start), and **Install update** never actually ran its installer. Both fixed and tested on Windows
+  11; PCs on 0.8.1 or older need the 0.9.0 installer run by hand once.
 - **Changes are approved by the owner.** Technicians' changes go to the owner as pull requests (`tools/update.sh` opens
   them); ideas, problems and rollback requests go in GitHub Issues. Only the owner publishes versions.
 

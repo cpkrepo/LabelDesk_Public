@@ -388,7 +388,7 @@ class WindowsOlderVersion(WindowsInstallUpdate):
             app.install_windows_version("9.9.9")
             script = open(os.path.join(d, "update", "install-update.ps1"), encoding="utf-8").read()
         self.assertLess(script.index("'/x'"), script.index("'/i'"))           # uninstall, then install the older one
-        self.assertIn("DisplayName -eq 'LabelDesk'", script)
+        self.assertIn("RelatedProducts('{6B9C2E31-4A57-4D3F-9E1B-2F7C5A0D8E41}')", script)
 
     def test_newer_version_does_not_uninstall(self):
         msi = b"MSI bytes"

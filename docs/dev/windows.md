@@ -29,3 +29,18 @@ Owner wants each PC **independent** (no shared server). Same app; only printing 
   RemoveExistingProducts replaces the old version) and starts labeldesk-server.pyw again. NOT yet run on Windows.
 - Printers by IP: Settings → DYMO printers by IP runs printer-check.ps1 (read-only, output shown) and
   add-dymo-printer.ps1 -Pause in an elevated window. Both ship in the MSI root.
+
+## Updates and version switching — tested on the VM 2026-10-10 (0.8.1 ⇄ 0.9.0)
+- MSI upgrade bug (≤ 0.8.1 installers): files whose version didn't change (python.exe, pythonw.exe) were costed as
+  "already there", then RemoveExistingProducts deleted them with the old product → LabelDesk installed without Python.
+  Fix: `REINSTALLMODE=amus` in labeldesk.wxs (+ RemoveExistingProducts after InstallValidate). The NEW MSI's property
+  governs, so upgrading any old install to ≥ 0.9.0 is fine.
+- The update helper was started with DETACHED_PROCESS: PowerShell with no console quits at once, so "Install update"
+  never ran msiexec. Now CREATE_NO_WINDOW | NEW_PROCESS_GROUP (+ BREAKAWAY_FROM_JOB, fallback without). PCs on ≤ 0.8.1
+  can't self-update: run LabelDesk-0.9.0.msi by hand once.
+- Per-user MSIs are NOT under HKCU…\Uninstall: find installs with `(New-Object -ComObject WindowsInstaller.Installer)
+  .RelatedProducts('{6B9C2E31-…}')` (the fixed UpgradeCode). Older version = uninstall those, then install (an older MSI
+  won't replace a newer one). Settings, logo, history in %APPDATA%/%LOCALAPPDATA%\LabelDesk survive.
+- VM testing: start LabelDesk the way users do (explorer opening the Startup shortcut) — a scheduled task running
+  pythonw directly kills its children when it exits. Send PowerShell scripts as ASCII files (PS 5 misreads UTF-8 without BOM).
+
