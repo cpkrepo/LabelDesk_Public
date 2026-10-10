@@ -68,7 +68,10 @@ class Auto:
 
     # ---- the scan
     def scan(self):
-        if self.scanning:
+        if self.scanning:                                         # one already running (e.g. at start): wait for its result
+            end = time.time() + 60
+            while self.scanning and time.time() < end:
+                time.sleep(0.2)
             return
         self.scanning = True
         try:

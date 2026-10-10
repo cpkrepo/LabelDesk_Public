@@ -18,6 +18,8 @@ server/autoprint.py  printers set themselves up: scan at start + every 5 min →
                      while busy); app.py QueueOps = lpstat/lpadmin; roll_check() stops prints on the wrong/empty roll (422)
 server/sheet.py      Batch → Open spreadsheet: CSV (sniffed delimiter, BOM, cp1252) + .xlsx (zip/XML, first sheet, date formats →
                      ISO), stdlib; POST /api/sheet. Sample: tests/samples/intake.xlsx (LibreOffice-made, made-up data)
+server/winmdns.py    Windows: Bonjour via the system's DNS-SD (dnsapi DnsServiceBrowse/Resolve/Register, ctypes) — no firewall rule
+                     needed; tests/windows/mdns_check.py proves it on Windows (announces fakes, finds them)
 server/ipp.py        minimal IPP client for local CUPS (job + printer state) and DYMO reasons → plain English
 server/barcode.py    zbarimg on the print image: UPS 1Z…, FedEx 34-digit (last 12 = tracking #), USPS
 server/inbox.py      watches Downloads (new carrier PDFs only) + /var/spool/labeldesk (the print-dialog printer)

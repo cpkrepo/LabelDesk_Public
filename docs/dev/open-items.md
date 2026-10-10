@@ -67,12 +67,12 @@
 fine), 8 scanner-first auto-print, the customer claim receipt, and all deployment/lifecycle items (don't fit the
 shop's workflow). 11 = an UNSIGNED .pkg (no Apple Developer account).
 **1** and **2** built in 0.9.0 (CI + fakes on Fedora and macOS); still to check against the shop's REAL printers.
-- [~] 1. **Printers found automatically** (0.9.0: works on Fedora. **macOS: blocked** — Local Network privacy gives a
-      LaunchAgent "No route to host" for multicast (CI 2026-10-10); options: browse via CUPS (`lpinfo --include-schemes dnssd`,
-      cupsd is exempt; queues by dnssd URI) or run as an app bundle granted Local Network. **Windows: untested** (VM has no
-      multicast; firewall may drop replies) — maybe Windows' DnsServiceBrowse API. Real printers: do they announce _pdl-datastream?) at startup + every few minutes (Bonjour): a printer's new IP → its queue is
-      re-pointed silently; a missing 550 Turbo / 5XL queue → added (Fedora/Mac; Windows: one **Add** button, needs admin);
-      an extra/unknown DYMO → a banner asks, never added silently.
+- [~] 1. **Printers found automatically** — Fedora: own mDNS scan (IPs → rolls). **Mac: through CUPS** (`lpinfo --include-
+      schemes dnssd`; macOS Local Network privacy blocks the LaunchAgent's own scan — "No route to host", CI 2026-10-10);
+      queues by dnssd:// URI, so no rolls on the Mac unless a queue has an IP. **Windows: system DNS-SD** (server/winmdns.py,
+      DnsServiceBrowse/Resolve, checked on the Win11 VM with announced fakes: found, rolls read); offers only (UAC).
+      Open: Windows shows the shop's DYMO Connect printers' matches as "extra" (the Windows port's IP isn't read yet);
+      real printers: do they announce _pdl-datastream on Bonjour?
 - [~] 2. **Loaded roll from the printer** (0.9.0; real printers: `tools/dymo-status.py <ip>` — SKU text + count as documented?) (550 series NFC, status bytes 11–22 SKU, 27–28 labels left; ESC U = size in mm):
       pick 30252/30321 automatically, warn before printing on the wrong roll, labels remaining + low warning.
 - [ ] 3. More barcodes: Code 39, UPC next to Code 128; **QR only for phones** (customers), see note below.

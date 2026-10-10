@@ -29,8 +29,8 @@ the owner's `tools/update.sh` turns that heading into the version number when it
   filters for tags/shipping and dates, **Show more** for older labels, and **Export CSV** for Excel.
 - **Paused printers resume by themselves** once they answer again (Fedora and Mac), and Settings → Printers shows each
   printer's state, roll and labels left.
-- **Printers set themselves up** (Fedora; on the Mac, macOS doesn't allow it from the background yet, and on Windows it's
-  untested — Settings says when it can't look). When LabelDesk starts and every few minutes it looks for the DYMO
+- **Printers set themselves up** on Fedora and the Mac (on the Mac through CUPS, by the printer's Bonjour name); on
+  Windows LabelDesk finds them through Windows' own Bonjour and offers **Use for…** (adding a printer needs an admin). When LabelDesk starts and every few minutes it looks for the DYMO
   printers on the network: a printer it finds for the first time is set up, and a printer that got a new address is followed — no more
   `add-printers.sh` after a router restart. Other DYMO printers it finds are listed in Settings → Printers on the network
   with a "Use for…" button (Windows: always a button, it needs an admin prompt).

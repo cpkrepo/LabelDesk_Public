@@ -184,6 +184,21 @@ class Decisions(unittest.TestCase):
         self.assertEqual([o["why"] for o in a.offers], ["add"])
 
 
+class ScanWhileScanning(unittest.TestCase):
+    def test_look_again_during_a_scan_waits_for_its_result(self):
+        import threading
+        import time
+        gate = threading.Event()
+        a = autoprint.Auto(FakeOps({"Dymo-550-Turbo": "socket://192.0.2.20:9100", "Dymo-5XL": "socket://192.0.2.21:9100"}),
+                           browse=lambda: (gate.wait(2), [T, X])[1])
+        t = threading.Thread(target=a.scan); t.start()
+        time.sleep(0.1)
+        threading.Timer(0.3, gate.set).start()
+        a.scan()                                                   # "Look again" while the first scan runs
+        self.assertEqual(len(a.found), 2)
+        t.join()
+
+
 class Rolls(unittest.TestCase):
     def test_roll_read_once_then_cached_and_never_while_busy(self):
         asked = []

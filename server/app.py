@@ -860,10 +860,13 @@ class QueueOps:
 
 
 def _browse():
-    """LabelDesk's own Bonjour scan (gives IPs → rolls); on the Mac through CUPS (macOS blocks the LaunchAgent's own scan),
-    and anywhere the own scan fails."""
+    """LabelDesk's own Bonjour scan (gives IPs → rolls) on Fedora; the Mac asks CUPS (macOS blocks the LaunchAgent's own
+    scan); Windows asks the system's DNS-SD (winmdns.py) — its firewall would drop replies to LabelDesk's own scan."""
     if MAC:
         return dymo.browse_cups()
+    if WINDOWS:                                    # the system's DNS-SD (its own firewall rules; no prompt for LabelDesk)
+        import winmdns
+        return winmdns.browse()
     found = dymo.browse()
     if not found and dymo.LAST.get("error") and not WINDOWS:
         return dymo.browse_cups()
