@@ -7,6 +7,8 @@ installer attached) and any of them can be brought back with `tools/rollback.sh 
 `tools/update.sh` turns that heading into the version number when it publishes.
 
 ## Unreleased
+
+## 0.8.1 — 2026-10-10
 - **Version history:** this file, linked from the README; every release on GitHub shows its version's notes.
 
 ## 0.8.0 — 2026-10-10
