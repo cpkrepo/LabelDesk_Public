@@ -306,7 +306,7 @@ def keep_image(hid, png):
 RECENT = {}                          # png hash → time: a second identical print within 3 s is a double press
 
 
-def submit(kind, png_bytes, copies, gray=None):
+def submit(kind, png_bytes, copies, gray=None, lab=None):
     """Hand one label to the printer. Fedora: the PNG through CUPS (lp). Windows: the 8-bit grey image through DYMO's
     Windows driver (winprint). → (queue/printer, job id)."""
     if WINDOWS:
@@ -316,13 +316,15 @@ def submit(kind, png_bytes, copies, gray=None):
                                "or Windows Settings → Printers")
         if not gray:
             raise ValueError("the Windows version needs the label as grey pixels (update LabelDesk)")
-        lab = labels()[kind]
+        designed = lab is not None
+        lab = lab or labels()[kind]
+        sku = lab["stock"].split()[0]
         job, _paper = winprint.submit(printer, kind, gray, copies, f"LabelDesk {lab['name']}",
-                                      paper=(lab["stock"].split()[0],) if kind == "tag" else None)
+                                      paper=(sku,) if (kind == "tag" or designed) and sku[:1].isdigit() else None)
         return printer, job
     if MAC and gray:
-        return lp(kind, label_pdf(labels()[kind], *gray), copies, ".pdf")
-    return lp(kind, png_bytes, copies)
+        return lp(kind, label_pdf(lab or labels()[kind], *gray), copies, ".pdf", lab)
+    return lp(kind, png_bytes, copies, lab=lab)
 
 
 def label_pdf(lab, w, h, gray):
@@ -354,7 +356,7 @@ def label_pdf(lab, w, h, gray):
     return bytes(out)
 
 
-def lp(kind, data, copies, suffix=".png"):
+def lp(kind, data, copies, suffix=".png", lab=None):
     """Send one label (PNG, or the exact-size PDF from label_pdf) to its queue at exactly 300 dpi on the right page
     size. → (queue, job number)."""
     queue = queue_for(kind)
@@ -362,7 +364,7 @@ def lp(kind, data, copies, suffix=".png"):
         f.write(data)
         path = f.name
     try:
-        lab = labels()[kind]
+        lab = lab or labels()[kind]
         opts = ["-o", "ppi=300", "-o", "position=center"] if suffix == ".png" else []
         r = subprocess.run(["lp", "-d", queue, "-n", str(copies), "-t", f"LabelDesk {lab['name']}",
                             "-o", f"PageSize={lab['page']}", *opts, path], capture_output=True, text=True, timeout=30)
@@ -379,18 +381,21 @@ def lp(kind, data, copies, suffix=".png"):
     return queue, m.group(1) if m else ""
 
 
-def print_label(kind, png, copies, fields, force=False, gray=None, client_check=None):
+def print_label(kind, png, copies, fields, force=False, gray=None, client_check=None, stock=None):
+    lab = stock_label(stock) if stock else None                   # the designer: any DYMO label (stocks.json)
+    if lab and ("550T" if kind == "tag" else "5XL") not in lab["printers"]:
+        raise ValueError(f"the {'550 Turbo' if kind == 'tag' else '5XL'} doesn't take {lab['name']} labels")
     digest = hashlib.sha1(png + f"{kind}:{copies}".encode()).hexdigest()
     if not force and time.time() - RECENT.get(digest, 0) < 3:
         return {"duplicate": True, "error": "that label was just sent — press Print again to print another"}, 409
     check = None
-    if kind == "ship":
+    if kind == "ship" and not lab:                                # a designed label on the 5XL isn't a carrier label
         # zbar here (Fedora) double-checks; without it (Windows) the browser's ZXing check stands
         check = barcode.check(png) if barcode.available() else (client_check or {"ok": True, "tracking": None})
         if not check.get("ok") and not force:
             return {"needsForce": True, "check": check, "error": check.get("message", "no barcode could be read")}, 422
     if not force:
-        why = roll_check(kind)
+        why = roll_check(kind, lab["sku"] if lab else None)
         if why:
             return {"needsForce": True, "roll": True, "error": why}, 422
     with LOCK:
@@ -403,7 +408,7 @@ def print_label(kind, png, copies, fields, force=False, gray=None, client_check=
     if kind == "ship":
         update(hid, image=keep_image(hid, png))
     try:
-        queue, job = submit(kind, png, copies, gray)
+        queue, job = submit(kind, png, copies, gray, lab)
     except RuntimeError as e:
         update(hid, state="failed", message=str(e))
         raise
@@ -514,6 +519,67 @@ def check_update(cfg=None, now=None):
         res["error"] = str(e)[:200]
     _update.update(at=now, result=res)
     return res
+
+
+# every DYMO label the 550 / 5XL drivers know (tools/gen-stocks.py → stocks.json) — the designer prints on any of them
+def _load_stocks():
+    try:
+        with open(os.path.join(HERE, "stocks.json")) as f:
+            return {s["id"]: s for s in json.load(f)["stocks"]}
+    except (OSError, ValueError, KeyError):
+        return {}
+
+
+STOCKS = _load_stocks()
+
+
+def stock_label(stock_id):
+    """A stocks.json label in the same shape as LABELS entries (page, inches, printable area). KeyError if unknown."""
+    s = STOCKS[stock_id]
+    w, h = s["size_pt"]
+    return {"name": s["name"], "stock": s["name"], "page": s["page"], "size": s["name"].split(" ", 1)[-1],
+            "width_in": w / 72, "height_in": h / 72, "safe_in": [v / 72 for v in s["area_pt"]], "sku": s["sku"],
+            "printers": s["printers"]}
+
+
+# ---- shop templates: designer layouts shared through the repo (templates/*.json — reviewed like any change)
+TEMPLATES_DIR = os.environ.get("LABELDESK_TEMPLATES") or os.path.join(ROOT, "templates")
+
+
+def shared_templates():
+    out = []
+    try:
+        names = sorted(n for n in os.listdir(TEMPLATES_DIR) if n.endswith(".json"))
+    except OSError:
+        return out
+    for n in names:
+        try:
+            with open(os.path.join(TEMPLATES_DIR, n), encoding="utf-8") as f:
+                t = json.load(f)
+            if isinstance(t, dict) and isinstance(t.get("objects"), list):
+                out.append({**t, "id": "shop:" + n[:-5], "shared": True})
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+def share_template(t):
+    """Settings-free sharing: write the layout into the checkout's templates/ — tools/update.sh then sends it to the owner
+    as a pull request (Fedora/Mac). Pictures are refused: the repo is public (logos stay per PC)."""
+    if WINDOWS or not os.path.isdir(os.path.join(ROOT, ".git")):
+        raise ValueError("sharing needs a Fedora or Mac PC with LabelDesk from GitHub — use Export and send the file instead")
+    if not isinstance(t, dict) or not isinstance(t.get("objects"), list) or not str(t.get("name") or "").strip():
+        raise ValueError("send a template with a name")
+    if any(o.get("kind") == "image" for o in t["objects"]):
+        raise ValueError("templates with pictures can't be shared — the repo is public (logos stay on each PC). Remove the picture first")
+    slug = re.sub(r"[^a-z0-9]+", "-", t["name"].strip().lower()).strip("-")[:60] or "template"
+    keep = {k: t[k] for k in ("name", "stock", "orientation", "rect", "objects", "flip") if k in t}
+    os.makedirs(TEMPLATES_DIR, exist_ok=True)
+    path = os.path.join(TEMPLATES_DIR, slug + ".json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(keep, f, indent=1, ensure_ascii=False)
+        f.write("\n")
+    return os.path.relpath(path, ROOT)
 
 
 def labels(cfg=None):
@@ -913,7 +979,7 @@ def expected_stock(kind, cfg=None):
     return labels(cfg)[kind]["stock"].split()[0]
 
 
-def roll_check(kind):
+def roll_check(kind, want=None):
     """None, or why this label shouldn't print right now (wrong roll / no labels) — the page offers Print anyway."""
     if not config().get("auto_printers", True):
         return None
@@ -926,7 +992,7 @@ def roll_check(kind):
     printer = "550 Turbo" if kind == "tag" else "5XL"
     if not r["canPrint"]:
         return f"the {printer} says {r['media']}"
-    want = expected_stock(kind)
+    want = want or expected_stock(kind)
     if r["stock"] and r["stock"] != want:
         return (f"the {printer} has {r['name']} labels loaded, but LabelDesk is set to print {dymo.describe_roll(want) or want}"
                 + (" — change it in Settings → Tag labels" if kind == "tag" else ""))
@@ -1139,6 +1205,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"events": AUTO.since(int((q.get("after") or ["0"])[0]))})
             if path == "/api/update":
                 return self.send_json(check_update())
+            if path == "/api/stocks":                        # the designer's label list
+                return self.send_json({"stocks": list(STOCKS.values())})
+            if path == "/api/templates/shared":              # the shop's templates (templates/*.json in the repo)
+                return self.send_json({"templates": shared_templates()})
             if path == "/api/versions":                      # Settings → Version
                 return self.send_json(versions_info())
             if path == "/api/update/log":
@@ -1255,8 +1325,11 @@ class Handler(BaseHTTPRequestHandler):
                     if len(raw) != int(g["w"]) * int(g["h"]):
                         raise ValueError("grey image size mismatch")
                     gray = (int(g["w"]), int(g["h"]), raw)
+                stock = b.get("stock") or None
+                if stock is not None and stock not in STOCKS:
+                    raise ValueError("unknown label")
                 res, code = print_label(kind, png, copies, fields, force=bool(b.get("force")), gray=gray,
-                                        client_check=b.get("check") if isinstance(b.get("check"), dict) else None)
+                                        client_check=b.get("check") if isinstance(b.get("check"), dict) else None, stock=stock)
                 return self.send_json(res, code)
             if m := re.fullmatch(r"/api/job/(\d+)/cancel", path):
                 cancel_job(int(m.group(1)))
@@ -1280,6 +1353,8 @@ class Handler(BaseHTTPRequestHandler):
             if m := re.fullmatch(r"/api/ticket/(\d{1,10})/collected", path):   # {collected: bool} — this PC's record only
                 set_collected(m.group(1), bool(b.get("collected", True)))
                 return self.send_json(ticket_info(m.group(1)))
+            if path == "/api/templates/share":               # {template} → templates/<name>.json in this checkout
+                return self.send_json({"ok": True, "path": share_template(b.get("template"))})
             if path == "/api/sheet":                         # Batch → Open spreadsheet: {name, data: base64} → columns + rows
                 return self.send_json(sheet.read(str(b.get("name") or ""), base64.b64decode(b.get("data") or "", validate=True)))
             if path == "/api/settings/auto-ship":            # Settings → Shipping labels print by themselves: {on}

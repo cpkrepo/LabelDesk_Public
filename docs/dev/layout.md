@@ -27,6 +27,10 @@ server/connectwise.py  read-only ConnectWise PSA lookups (ticket → company/con
 server/keys.py       API keys: Fedora login keyring (secret-tool) · Windows DPAPI · 0600 file fallback
 docs/connectwise-setup.md  for the ConnectWise admin: read-only role, API member + keys, Client ID
 tests/fake_connectwise.py  stand-in ConnectWise API (tests + trying the UI without keys)
+web/designer.js      Designer tab: layouts for any stock (template.js format + stock/orientation/flip; shapes), drag/resize, per PC
+                     (localStorage) or the shop's (templates/*.json via POST /api/templates/share → update.sh → PR); prints
+                     with app.drawLabel + /api/print {stock} (server stock_label: page + printable area from stocks.json)
+server/stocks.json   65 DYMO labels from DYMO's lw550t/lw5xl PPDs (tools/gen-stocks.py regenerates it)
 web/barcodes.js      Code 128 / Code 39 / UPC-A / EAN-13 / QR encoders + draw (whole-pixel modules); tests/barcodes.test.mjs
                      decodes each with zbarimg; render_check.sh decodes them on real tags
 web/                 index.html · app.js (canvas rendering at 300 dpi, Code 128 encoder, shipping crop/turn, history) ·
