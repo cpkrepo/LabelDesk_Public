@@ -23,6 +23,8 @@ server/connectwise.py  read-only ConnectWise PSA lookups (ticket → company/con
 server/keys.py       API keys: Fedora login keyring (secret-tool) · Windows DPAPI · 0600 file fallback
 docs/connectwise-setup.md  for the ConnectWise admin: read-only role, API member + keys, Client ID
 tests/fake_connectwise.py  stand-in ConnectWise API (tests + trying the UI without keys)
+web/barcodes.js      Code 128 / Code 39 / UPC-A / EAN-13 / QR encoders + draw (whole-pixel modules); tests/barcodes.test.mjs
+                     decodes each with zbarimg; render_check.sh decodes them on real tags
 web/                 index.html · app.js (canvas rendering at 300 dpi, Code 128 encoder, shipping crop/turn, history) ·
                      detect.js (finds the label on a carrier page + which way is up) · template.js (.dymo import +
                      render, incl. embedded pictures) · style.css. Shop logo: per PC in the config folder

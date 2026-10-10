@@ -1,5 +1,6 @@
 // LabelDesk front end: draws labels at 300 dpi on a canvas (the preview IS the print), prints via the local server.
 import { detectLabel } from "./detect.js";
+import { draw as drawCode } from "./barcodes.js";
 import { parseDymo, drawTemplate, loadTemplates, saveTemplates, activeTemplate, activeTemplateId, setActiveTemplate, templateImagesReady } from "./template.js";
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -23,30 +24,12 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "
 // CUPS places a 300 ppi image 1:1 there. A full-label image is bigger than that area and CUPS tiles it over 4 pages.
 const area = L => [Math.floor((L.safe_in[2] - L.safe_in[0]) * DPI) - 1, Math.floor((L.safe_in[3] - L.safe_in[1]) * DPI) - 1];
 
-// ------------------------------------------------------------------ Code 128 (set B) — ticket numbers, any printable ASCII
-export const C128 = ["212222","222122","222221","121223","121322","131222","122213","122312","132212","221213","221312","231212",
-  "112232","122132","122231","113222","123122","123221","223211","221132","221231","213212","223112","312131","311222","321122",
-  "321221","312212","322112","322211","212123","212321","232121","111323","131123","131321","112313","132113","132311","211313",
-  "231113","231311","112133","112331","132131","113123","113321","133121","313121","211331","231131","213113","213311","213131",
-  "311123","311321","331121","312113","312311","332111","314111","221411","431111","111224","111422","121124","121421","141122",
-  "141221","112214","112412","122114","122411","142112","142211","241211","221114","413111","241112","134111","111242","121142",
-  "121241","114212","124112","124211","411212","421112","421211","212141","214121","412121","111143","111341","131141","114113",
-  "114311","411113","411311","113141","114131","311141","411131","211412","211214","211232","2331112"];
-export function code128(text) {
-  const codes = [104];                                        // Start B
-  for (const ch of text) {
-    const c = ch.charCodeAt(0) - 32;
-    if (c < 0 || c > 94) throw new Error("barcode: only plain characters");
-    codes.push(c);
-  }
-  codes.push(codes.reduce((s, c, i) => s + c * (i || 1), 0) % 103, 106);   // checksum, Stop
-  return codes.map(c => C128[c]).join("");                    // module widths: bar, space, bar, …
-}
-function drawBarcode(ctx, text, x, y, w, h) {
-  const widths = code128(text), modules = [...widths].reduce((s, d) => s + +d, 0) + 20;   // + 10-module quiet zones
-  const m = Math.max(1, Math.floor(w / modules));             // whole pixels per module: crisp on a 300 dpi head
-  let cx = x + Math.round((w - m * (modules - 20)) / 2);
-  [...widths].forEach((d, i) => { if (i % 2 === 0) ctx.fillRect(cx, y, m * d, h); cx += m * d; });
+// ------------------------------------------------------------------ barcodes (web/barcodes.js): Code 128, Code 39, UPC-A, EAN-13, QR
+export { C128, code128 } from "./barcodes.js";
+// the tag's ticket barcode: Code 128 (default) or Code 39, Settings → Tag barcode — both read by the shop's 1D scanner
+const tagSymbology = () => (CFG && CFG.tagBarcode) || "code128";
+function drawBarcode(ctx, text, x, y, w, h, symbology = tagSymbology()) {
+  drawCode(ctx, symbology, text, x, y, w, h);
 }
 
 // ------------------------------------------------------------------ text fitting
@@ -551,6 +534,11 @@ $("#tag-label").onchange = async e => {
     $("#tag-stock").textContent = `${CFG.tagLabel} · ${CFG.labels.tag.size}`;
   } catch (err) { toast(err.message, true); $("#tag-label").value = CFG.tagLabel; }
 };
+// ---- Settings → Tag barcode: Code 128 or Code 39 (both read by a 1D scanner)
+$("#tag-barcode").onchange = async e => {
+  try { await api("settings/tag-barcode", { symbology: e.target.value }); CFG = await api("config"); drawTagPreview(); toast("Saved"); }
+  catch (err) { toast(err.message, true); $("#tag-barcode").value = CFG.tagBarcode; }
+};
 // ---- Settings → Tag logo (per PC; kept in the config folder, not in the app)
 function showLogoState() {
   const has = !!TAG_LOGO.naturalWidth;
@@ -975,6 +963,7 @@ window.addEventListener("focus", rollDate);
   setInterval(rollDate, 60000);
   $("#flip").checked = flip();
   $("#tag-label").value = CFG.tagLabel;
+  $("#tag-barcode").value = CFG.tagBarcode || "code128";
   $("#tag-stock").textContent = `${CFG.tagLabel} · ${CFG.labels.tag.size}`;
   try { form.showContact.checked = JSON.parse(localStorage.getItem("showContact")) ?? false; } catch {}
   $("#win-printer").hidden = $("#win-dymo").hidden = CFG.platform !== "windows";

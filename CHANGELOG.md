@@ -7,6 +7,9 @@ installer attached) and any of them can be brought back with `tools/rollback.sh 
 the owner's `tools/update.sh` turns that heading into the version number when it publishes.
 
 ## Unreleased
+- **More barcode types:** Code 39, UPC-A, EAN-13 and QR next to Code 128. Imported DYMO Connect templates now draw the
+  barcode type they were made with (QR included); Settings → Tag barcode picks Code 128 or Code 39 for the ticket
+  barcode. Everything a technician scans stays 1D; QR is for customers' phones.
 - **History searches everything ever printed** on this PC — customer, ticket, serial, tracking number, any text — with
   filters for tags/shipping and dates, **Show more** for older labels, and **Export CSV** for Excel.
 - **Paused printers resume by themselves** once they answer again (Fedora and Mac), and Settings → Printers shows each

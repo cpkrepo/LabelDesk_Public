@@ -14,6 +14,16 @@ const FONT_STACK = '"DejaVu Sans", "Liberation Sans", Arial, sans-serif';
 const num = (el, sel) => parseFloat(el.querySelector(sel)?.textContent ?? "") || 0;
 const txt = (el, sel) => el.querySelector(sel)?.textContent?.trim() ?? "";
 
+// DYMO Connect's BarcodeFormat / QR objects → web/barcodes.js (anything unknown draws as Code 128, like before)
+export function symbologyOf(dymoFormat) {
+  const f = String(dymoFormat || "").toLowerCase();
+  if (f.startsWith("qr")) return "qr";
+  if (f.startsWith("code39")) return "code39";
+  if (f === "upca" || f === "upc") return "upca";
+  if (f.startsWith("ean13")) return "ean13";
+  return "code128";
+}
+
 // ---- import ---------------------------------------------------------------------------------------------------------
 export function parseDymo(xml, fileName = "template") {
   const doc = new DOMParser().parseFromString(xml, "application/xml");
@@ -34,6 +44,11 @@ export function parseDymo(xml, fileName = "template") {
       const src = embeddedImage(o);
       if (src) objects.push({ kind: "image", name, ...box, halign: txt(o, ":scope > HorizontalAlignment") || "Center", src, sample: "(picture)", format: "",
                               scale: txt(o, ":scope > ScaleMode") || "Uniform" });
+      continue;
+    }
+    if (o.tagName === "QRCodeObject") {                                    // DYMO Connect's QR object (its data: Data/DataString)
+      const data = [...o.querySelectorAll("DataString, Data > *")].map(d => d.textContent).join("") || txt(o, ":scope > Data");
+      objects.push({ kind: "barcode", name, ...box, halign, format: guessFormat(name, data, true), sample: data, symbology: "QRCode" });
       continue;
     }
     if (o.tagName === "BarcodeObject") {
@@ -136,7 +151,7 @@ export function drawTemplate(ctx, tpl, f, DW, DH, { drawBarcode, usDate }) {
     }
     if (o.kind === "barcode") {
       const data = fill(o.format).trim();
-      if (data) drawBarcode(ctx, data, x, y, w, h);
+      if (data) drawBarcode(ctx, data, x, y, w, h, symbologyOf(o.symbology));
       continue;
     }
     const texts = fill(o.format).split("\n");

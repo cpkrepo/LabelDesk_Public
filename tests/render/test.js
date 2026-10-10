@@ -27,6 +27,13 @@ setTimeout(async () => {
   const tpl = parseDymo(DYMO, "harness.dymo"); await templateImagesReady(tpl);
   out.template_images = tpl.objects.filter(o => o.kind === "image").length;
   out.template_bar = tag(f("Acme Dental Group", true), 0, tpl);
-  out.blank = tag({ free: "FRAGILE\nScreen cracked" });                // blank tag: click the preview and type
+  out.blank = tag({ free: "FRAGILE\nScreen cracked" });
+  // the same template with a Code 39 barcode, and with a DYMO QR object instead (web/barcodes.js through drawTemplate)
+  const c39 = parseDymo(DYMO.replace("Code128Auto", "Code39"), "c39.dymo"); await templateImagesReady(c39);
+  out.template_c39 = tag(f("Acme Dental Group", true), 0, c39);
+  const qrx = DYMO.replace(/<BarcodeObject>.*?<\/BarcodeObject>/s,
+    obj("QRCodeObject", "QR", 0.1, 0.75, 0.5, 0.5, "<Data><DataString>12345</DataString></Data>"));
+  const qrt = parseDymo(qrx, "qr.dymo"); await templateImagesReady(qrt);
+  out.template_qr = tag(f("Acme Dental Group", true), 0, qrt);                // blank tag: click the preview and type
   document.body.innerHTML = "<pre id=out>" + JSON.stringify(out) + "</pre>";
 }, 1500);

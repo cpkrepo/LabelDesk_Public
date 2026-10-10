@@ -105,7 +105,7 @@ LABELS = {
 def config():
     c = {"tag_queue": "Dymo-550-Turbo", "ship_queue": "Dymo-5XL", "bind": "127.0.0.1", "port": 8792, "flip_tag": False, "tag_offset_mm": 0,
          "watch_downloads": True, "update_check": True, "update_url": UPDATE_URL, "tag_logo": "",
-         "tag_label": DEFAULT_TAG_STOCK, "auto_printers": True}
+         "tag_label": DEFAULT_TAG_STOCK, "auto_printers": True, "tag_barcode": "code128"}
     try:
         with open(CONF_FILE) as f:
             c.update(json.load(f))
@@ -1067,7 +1067,8 @@ class Handler(BaseHTTPRequestHandler):
                 cfg = config()
                 return self.send_json({"version": VERSION, "labels": labels(cfg), "tagStocks": TAG_STOCKS,
                                        "tagLabel": labels(cfg)["tag"]["stock"].split()[0], "flipTag": cfg["flip_tag"], "tagOffsetMm": float(cfg.get("tag_offset_mm") or 0),
-                                       "barcodeCheck": barcode.available(), "started": STARTED, "platform": "windows" if WINDOWS else "mac" if MAC else "linux"})
+                                       "barcodeCheck": barcode.available(), "started": STARTED,
+                                       "tagBarcode": cfg.get("tag_barcode") if cfg.get("tag_barcode") in ("code128", "code39") else "code128", "platform": "windows" if WINDOWS else "mac" if MAC else "linux"})
             if path == "/api/printers":
                 return self.send_json(printers())
             if path == "/api/printers/events":               # ?after=<id>: what LabelDesk did by itself
@@ -1208,6 +1209,12 @@ class Handler(BaseHTTPRequestHandler):
                 _cw_check.clear()
                 keys.clear()
                 return self.send_json(cw_status())
+            if path == "/api/settings/tag-barcode":          # Settings → Tag barcode: {symbology: code128 | code39}
+                sym = str(b.get("symbology") or "")
+                if sym not in ("code128", "code39"):
+                    raise ValueError("tag barcode must be code128 or code39")
+                save_config(tag_barcode=sym)
+                return self.send_json({"ok": True})
             if path == "/api/settings/tag-label":            # Settings → Tag labels: {label: "30252" | "30321"}
                 stock = str(b.get("label") or "")
                 if stock not in TAG_STOCKS:
