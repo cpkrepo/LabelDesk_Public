@@ -603,3 +603,43 @@ class BeenHereAndPickup(ServerBase):
         self.assertTrue(t["collected"])
         self.assertEqual(len([h for h in self.call("history")[1]["items"] if h.get("collected")]), 2)
         self.assertIsNone(self.call("ticket/75013/collected", {"collected": False})[1]["collected"])
+
+
+class Designer(ServerBase):
+    """Designer: every DYMO label from stocks.json, printing on any of them, the shop's templates (templates/)."""
+    def test_stocks_come_from_dymos_drivers(self):
+        s = {x["sku"]: x for x in self.call("stocks")[1]["stocks"]}
+        self.assertEqual((s["30336"]["page"], s["1744907"]["printers"]), ("w72h154.1", ["5XL"]))
+        self.assertGreater(len(s), 40)
+
+    def test_print_on_another_label_uses_its_page_and_skips_the_carrier_check(self):
+        done = subprocess.CompletedProcess([], 0, "request id is Dymo-5XL-8 (1 file(s))\n", "")
+        with mock.patch.object(app.subprocess, "run", return_value=done) as run, \
+                mock.patch.object(app.barcode, "check", side_effect=AssertionError("carrier check on a designed label")):
+            code, r = self.call("print", {"kind": "ship", "png": PNG, "copies": 1, "fields": {}, "stock": "w296h452"})   # 4×6 on the 5XL
+        self.assertEqual(code, 200, r)
+        self.assertTrue(any(a.startswith("PageSize=") for a in run.call_args.args[0]))
+        with mock.patch.object(app.subprocess, "run", return_value=done) as run:
+            self.call("print", {"kind": "tag", "png": PNG, "copies": 1, "fields": {}, "stock": "w72h154.1", "force": True})
+        self.assertIn("PageSize=w72h154.1", run.call_args.args[0])
+
+    def test_a_printer_that_doesnt_take_the_label_is_refused(self):
+        code, r = self.call("print", {"kind": "tag", "png": PNG, "copies": 1, "fields": {}, "stock": "w296h452"})   # 4×6 on the 550
+        self.assertEqual(code, 400)
+        self.assertIn("doesn't take", r["error"])
+        self.assertEqual(self.call("print", {"kind": "tag", "png": PNG, "copies": 1, "fields": {}, "stock": "nope"})[0], 400)
+
+    def test_sharing_writes_templates_and_refuses_pictures(self):
+        d = tempfile.mkdtemp()
+        tpl = {"name": "Asset tag — big!", "stock": "w79h252", "orientation": "Landscape", "rect": {"x": 0, "y": 0, "w": 3.2, "h": 1},
+               "objects": [{"kind": "text", "format": "{company}", "x": 0, "y": 0, "w": 3, "h": 0.5, "lines": [{"size": 12}]}]}
+        with mock.patch.object(app, "TEMPLATES_DIR", d), mock.patch.object(app.os.path, "isdir", return_value=True):
+            code, r = self.call("templates/share", {"template": tpl})
+            self.assertEqual(code, 200, r)
+            self.assertTrue(r["path"].endswith("asset-tag-big.json"))
+            shop = self.call("templates/shared")[1]["templates"]
+            self.assertEqual((shop[0]["name"], shop[0]["id"], shop[0]["shared"]), ("Asset tag — big!", "shop:asset-tag-big", True))
+            pic = {**tpl, "objects": tpl["objects"] + [{"kind": "image", "src": "data:image/png;base64,AAAA"}]}
+            code, r = self.call("templates/share", {"template": pic})
+            self.assertEqual(code, 400)
+            self.assertIn("public", r["error"])

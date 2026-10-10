@@ -79,7 +79,8 @@ shop's workflow). 11 = an UNSIGNED .pkg (no Apple Developer account).
       **Shop scanner = 1D barcode scanner only (no QR reader, 2026-10-10):** everything a technician scans (ticket #,
       asset #, serial) must be Code 128. QR is for customers' phones only (support link on deployment tags). A 2D
       scanner (reads both) is a cheap upgrade if QR is ever wanted in-house.
-- [ ] 4. **Label designer**: any DYMO size; text/barcode/QR/image/shape objects; templates shared via the repo (no work data).
+- [x] 4. **Label designer** (0.10: Designer tab; 30336 printed via CUPS+DYMO driver to the fake, PNG and PDF paths
+      identical; Windows paper by SKU name — untested for non-tag sizes): any DYMO size; text/barcode/QR/image/shape objects; templates shared via the repo (no work data).
 - [ ] 5. **Spreadsheet batch**: CSV/Excel in, one label per row, field mapping.
 - [–] (not wanted) 6. **Signed Windows installer** (no SmartScreen "unknown publisher").
 - [ ] 7. Hands-free shipping (opt-in): a carrier label in Downloads prints itself once its barcode checks out.

@@ -17,6 +17,8 @@ network printers. No account, no server, nothing about your labels leaves the PC
 - **Shipping labels** on the LabelWriter **5XL** (4″ × 6″). Paste a screenshot, drop the carrier's PDF, or just
   download it — LabelDesk finds the label on the page, turns it upright, fits it, and checks the barcode scans before it
   prints. Adjust with ↺ ↻ 180° or by dragging a box.
+- **Label designer:** lay out any DYMO label the two printers take — text, fields, barcodes, pictures, lines — and
+  share good layouts with the whole shop.
 - **The preview is exactly what prints** — it's drawn at the printers' own 300 dpi.
 - **Sets the printers up by itself:** finds the DYMO printers on the network, follows them when their address changes,
   and reads the loaded roll — which labels, how many are left — so it never prints on the wrong one.
