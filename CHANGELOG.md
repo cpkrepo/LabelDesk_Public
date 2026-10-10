@@ -7,6 +7,8 @@ installer attached) and any of them can be brought back with `tools/rollback.sh 
 the owner's `tools/update.sh` turns that heading into the version number when it publishes.
 
 ## Unreleased
+
+## 0.9.0 — 2026-10-10
 - **Label designer** (new Designer tab): any of the 65 DYMO labels the 550 Turbo and 5XL take — text, fields that fill
   in when printing ({company}, {ticket}, {serial}…), every barcode type, pictures, lines and boxes; drag to place,
   corner to resize. Save layouts on the PC, make a tag-sized one the inventory tag's layout, export/import (.json or a
