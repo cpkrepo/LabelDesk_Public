@@ -4,7 +4,7 @@ Several technicians run it and change it with Claude; this checkout is a clone o
 github.com/cpkrepo/LabelDesk_Public. Read only what the task needs: docs/dev/layout.md (code map, tests) ·
 docs/dev/facts.md (driver, SELinux, CUPS tiling, 550 handshake, label detection) · docs/dev/windows.md (build, test VM,
 updates) · docs/dev/connectwise.md · docs/dev/open-items.md · docs/dev/printers.md · docs/dev/working.md.
-Skills in .claude/skills: labeldesk-printer-setup · labeldesk-testing · dymo-template-import (descriptions ≤ 200 chars:
+Skills in .claude/skills: labeldesk-printer-setup · labeldesk-testing · dymo-template-import · labeldesk-rollback (descriptions ≤ 200 chars:
 Claude.ai rejects longer; tools/package-skills.sh checks). People-facing setup: SETUP.md (keep it true when you change
 install/update/printer steps). License MIT. Version tags (v*) trigger .github/workflows/windows-installer.yml → MSI + .sha256 on the release, which
 the Windows app's "Install update" uses.
@@ -38,4 +38,6 @@ the Windows app's "Install update" uses.
    changed), `git rebase --continue`, then `tools/update.sh` again. Tests failing (exit 3): fix, don't skip.
    Push refused (exit 4): this technician has no write access — say so; keep the commits.
 5. When asked to "update LabelDesk": run `tools/update.sh --check` first and report what's local/unpushed, then `tools/update.sh`.
+6. A version is bad ("roll back", "undo", "go back to 0.7.0"): labeldesk-rollback skill (`tools/rollback.sh`). Never
+   force-push or delete tags — GitHub refuses it (rulesets), and rollback = an old version republished as a new number.
 - Tick or add items in docs/dev/open-items.md when a fact changes.

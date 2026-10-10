@@ -152,6 +152,16 @@ You can run `tools/update.sh` yourself too; `tools/update.sh --check` only repor
 | "git doesn't know who you are" | Section 5, step 2. |
 | "isn't a git checkout" | This copy came from a zip: reinstall from the clone (section 1). |
 
+**A new version is bad? Roll it back.** Ask Claude Code "roll LabelDesk back" (skill `labeldesk-rollback`), or:
+```bash
+tools/rollback.sh                          # list recent versions
+tools/rollback.sh 0.7.0 "0.7.1 cuts off the logo"
+```
+GitHub's newest version then becomes the code of 0.7.0 under the next number (e.g. 0.7.2), so every PC goes back with
+its normal update — Windows included (the Action builds its installer). The bad version isn't erased; the rollback can
+be undone the same way. GitHub refuses force-pushes and deleting `main` or version tags, so no one can lose the history
+by accident.
+
 ## 7. Publishing a Windows installer
 
 **Automatic.** Every version tag that `tools/update.sh` pushes starts the GitHub Action "Windows installer"

@@ -34,8 +34,10 @@ tools/dymo-status.py      READ-ONLY 32-byte status of a networked 550/5XL (ESC A
 tools/package-skills.sh   .claude/skills → dist/skills/<skill>.zip for Claude.ai upload (checks name/description limits)
 windows/printer-check.ps1 READ-ONLY Windows network/printer diagnostic (Wi-Fi vs wired, Public profile, tcp 9100, drivers)
 windows/add-dymo-printer.ps1  add/remove a DYMO printer by IP (raw 9100 + DYMO Connect's driver); admin; both go in the MSI
+tools/rollback.sh         list versions / publish an older version's code as the next version (rulesets forbid force-push + tag deletion)
 tools/update.sh           commit this PC's changes → rebase on GitHub main → bump VERSION → tests → push + tag → restart
 tests/test_server.py      unit tests (no printer): python3 -m unittest discover -s tests
+tests/test_rollback.py    tools/rollback.sh against the same throwaway repos
 tests/test_update.py      tools/update.sh against a throwaway bare repo + two clones (no network)
 tests/render_check.sh     headless-Chrome render + zbarimg barcode check (built-in tag, logo, offset, imported template)
 tests/browser_check.sh    real Chrome on Xvfb: pdf.js opens a PDF, a label saved to Downloads opens by itself, no page errors
