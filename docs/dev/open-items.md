@@ -60,3 +60,46 @@
 - [ ] **macOS on the real printers**: CI proves the Mac driver path against the fake LabelWriter; print a tag (long name +
       barcode) and a real UPS label from a Mac in the shop, scan both. Check DYMO Connect for Mac's CURRENT version has
       the same lw550t/lw5xl PPDs (CI uses 1.4.3.103, the newest downloadable by URL).
+
+## Roadmap (2026-10-10 review: as good as DYMO Connect, then better) — pick one, ship it, tick it
+Building now (0.9.0): **1** and **2**.
+- [ ] 1. **Printers found automatically** at startup + every few minutes (Bonjour): a printer's new IP → its queue is
+      re-pointed silently; a missing 550 Turbo / 5XL queue → added (Fedora/Mac; Windows: one **Add** button, needs admin);
+      an extra/unknown DYMO → a banner asks, never added silently.
+- [ ] 2. **Loaded roll from the printer** (550 series NFC, status bytes 11–22 SKU, 27–28 labels left; ESC U = size in mm):
+      pick 30252/30321 automatically, warn before printing on the wrong roll, labels remaining + low warning.
+- [ ] 3. More barcodes: **QR** (e.g. the ConnectWise ticket link), Code 39, UPC — next to Code 128.
+- [ ] 4. **Label designer**: any DYMO size; text/barcode/QR/image/shape objects; templates shared via the repo (no work data).
+- [ ] 5. **Spreadsheet batch**: CSV/Excel in, one label per row, field mapping.
+- [ ] 6. **Signed Windows installer** (no SmartScreen "unknown publisher").
+- [ ] 7. Hands-free shipping (opt-in): a carrier label in Downloads prints itself once its barcode checks out.
+- [ ] 8. Scanner-first: scanning a ticket barcode fills the ticket # and prints.
+- [ ] 9. Searchable history (tracking #, customer, serial, ticket) + export.
+- [ ] 10. Self-healing: auto-resume paused queues; printer panel (media, errors, labels left).
+- [ ] 11. Mac installer package for people who don't use Terminal.
+
+## MSP ideas: asset tags for drop-off repairs and customer deployments (brainstorm, 2026-10-10)
+Intake (PC dropped off for repair):
+- [ ] **Intake tag preset**: ticket # · customer/company · received date · **serial** · **bin/shelf** · QR/Code 128 of the
+      ticket. A USB barcode scanner reads the serial sticker on the laptop straight into the Serial field.
+- [ ] **"1 of 3" accessory tags** with the same ticket # (charger, dock, bag) — one click prints the set.
+- [ ] **Customer claim label/receipt** on the 5XL: ticket #, what was left (device, accessories, password given?), pickup QR.
+- [ ] **Been here before?** ConnectWise configuration lookup by serial (read-only) → previous tickets for this device.
+- [ ] **Bench scan**: scanning a tag in LabelDesk opens the ticket (ConnectWise link) and the tag's history; pickup scan marks
+      it collected in History.
+Deployment (PC set up for a customer):
+- [ ] **Deployment tag preset**: customer company/logo · asset # · serial · model · "Property of …" · **support QR** ("Need
+      help? Scan") → the customer's portal / support email with the asset # filled in — the tag becomes the way users
+      ask for help. Durable (polyester) roll for deployments, paper for intake — roll detection (2) warns on a mix-up.
+- [ ] **Asset numbers without duplicates across technicians**: use the ConnectWise configuration ID (looked up by serial)
+      or a per-customer prefix + serial — no shared counter to collide.
+- [ ] **Device info without typing**: a PowerShell/shell one-liner run on the PC being set up copies make/model/serial/
+      hostname/MAC as text; paste into LabelDesk → fields filled (LabelDesk stays local-only; nothing listens on the LAN).
+- [ ] **Batch deployments**: a customer's 20 new laptops from a CSV / ConnectWise configurations / RMM export → 20 tags.
+- [ ] **RMM lookup** (NinjaOne / Datto / N-able, read-only API like ConnectWise): hostname → serial, model, customer.
+- [ ] **Hostname labels** following the customer's naming convention (printed + shown to type in during setup).
+- [ ] **Warranty** end date (Dell/Lenovo/HP APIs) shown at deployment; optional on the tag.
+Lifecycle:
+- [ ] **On-site audit mode**: scan tags around the customer's office → found / missing list → CSV.
+- [ ] **Decommission label**: "Data wiped DATE by TECH — method" for disposal/recycling paperwork.
+
