@@ -26,7 +26,8 @@ import base64, html, io, json, re, sys
 from PIL import Image
 d = json.loads(html.unescape(re.search(r'<pre id="out">(.*?)</pre>', open(sys.argv[1]).read(), re.S).group(1)))
 assert d["c128_width_errors"] == 0, "Code 128 table has a pattern of the wrong width"
-for k in ("tag", "long_bar", "contact_bar", "offset_bar", "template_bar", "template_c39", "template_qr", "blank"):
+for k in ("tag", "long_bar", "contact_bar", "offset_bar", "template_bar", "template_c39", "template_qr", "blank", "intake_bar",
+          "accessory_bar", "full_bar"):
     im = Image.open(io.BytesIO(base64.b64decode(d[k].split(",")[1])))
     want = {"30252": (298, 962), "30321": (391, 960)}[sys.argv[3]]
     assert im.size == want, f"{k}: {im.size} — must be the {sys.argv[3]} printable area {want} or CUPS tiles it"
@@ -34,7 +35,7 @@ for k in ("tag", "long_bar", "contact_bar", "offset_bar", "template_bar", "templ
     im.rotate(90, expand=True).save(f"{sys.argv[2]}/{k}-reading.png")
 print(f"sizes OK ({sys.argv[3]} printable area)")
 PY
-for k in long_bar contact_bar offset_bar template_bar; do
+for k in long_bar contact_bar offset_bar template_bar intake_bar accessory_bar full_bar; do
   zbarimg --quiet "$out/$k.png" | grep -qx "CODE-128:75013" && echo "barcode OK on $k (CODE-128:75013)" || { echo "barcode did NOT decode on $k"; exit 1; }
 done
 zbarimg --quiet "$out/template_c39.png" | grep -qx "CODE-39:75013" && echo "barcode OK on template_c39 (CODE-39:75013)" || { echo "Code 39 did NOT decode"; exit 1; }

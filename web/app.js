@@ -107,10 +107,16 @@ export function drawTag(canvas, f, flip = false, offsetMm = tagOffset(), tpl = a
     nameLines = [name.slice(0, cut), name.slice(cut + 1)];
     nameMax = z(bar ? 52 : 62);
   }
-  const small = !!f.contact || nameLines.length > 1;              // a 4th line: everything a little smaller
+  // intake details on one small line: S/N (scanned) and shelf/bin; an accessory tag says what it is and "2 of 3"
+  const intake = [f.serial ? `S/N ${f.serial}` : "", f.bin ? `Bin ${f.bin}` : ""].filter(Boolean).join("   ");
+  const item = f.item ? `${f.item}${f.part ? ` · ${f.part}` : ""}` : (f.part ? `Device · ${f.part}` : "");
+  const extra = [item && { t: item, size: z(bar ? 50 : 60), min: z(28), weight: "700" },
+                 intake && { t: intake, size: z(bar ? 40 : 48), min: z(24), weight: "400" }].filter(Boolean);
+  const small = !!f.contact || nameLines.length > 1 || extra.length > 0;   // a 4th line: everything a little smaller
   const lines = [
     ...nameLines.map(t => ({ t, size: small ? Math.min(nameMax, z(78)) : nameMax, min: z(30), weight: "700", name: true })),
     ...(f.contact ? [{ t: f.contact, size: z(bar ? 44 : 54), min: z(28), weight: "400" }] : []),
+    ...extra,
     { t: `Received: ${usDate(f.received)}`, size: z(small ? (bar ? 42 : 50) : (bar ? 54 : 62)), min: z(28), weight: "400" },
     { t: `Ticket#: ${f.ticket || ""}`, size: z(small ? (bar ? 56 : 68) : (bar ? 70 : 88)), min: z(32), weight: "700" },
   ];
@@ -351,7 +357,10 @@ $("#ver-newest").onclick = () => switchVersion("newest", false);
 // ------------------------------------------------------------------ tag form
 const form = $("#tag-form");
 const tagFields = () => ({ customer: form.customer.value.trim(), received: form.received.value, ticket: form.ticket.value.trim().replace(/^#/, ""),
-                           barcode: form.barcode.checked, contact: form.showContact.checked ? form.contact.value.trim() : "" });
+                           barcode: form.barcode.checked, contact: form.showContact.checked ? form.contact.value.trim() : "",
+                           serial: form.serial.value.trim(), bin: form.bin.value.trim() });
+// accessories typed or picked: "Charger, Dock" → ["Charger", "Dock"] (each gets its own tag: "2 of 3")
+const accessories = () => form.accessories.value.split(/[,;\n]/).map(s => s.trim()).filter(Boolean);
 const flip = () => { try { return JSON.parse(localStorage.getItem("flipTag")) ?? CFG.flipTag; } catch { return CFG.flipTag; } };
 // text position on the tag (mm, + = down), per PC like Rotate 180°; config.json tag_offset_mm is the default
 function tagOffset() {
@@ -452,9 +461,17 @@ form.onsubmit = async e => {
   if (cwPending) { await cwPending; cwPending = null; }
   const f = tagFields();
   if (!f.customer || !f.ticket) return toast("Customer and ticket # are needed", true);
-  if (await printCanvas("tag", await tagCanvas(f), +form.copies.value || 1, f, tagWhat(f))) {
-    try { localStorage.setItem("lastTag", JSON.stringify(f)); } catch {}
-    form.customer.value = form.ticket.value = form.contact.value = ""; cwAuto = { customer: "", contact: "" }; cwInfo(""); cwSeq++;
+  const acc = accessories(), n = acc.length + 1;
+  const device = acc.length ? { ...f, part: `1 of ${n}`, accessories: acc } : f;
+  let ok = await printCanvas("tag", await tagCanvas(device), +form.copies.value || 1, device, tagWhat(device), { wait: acc.length > 0 });
+  for (let i = 0; ok && i < acc.length; i++) {                 // one tag per accessory, same ticket # and barcode
+    const a = { ...f, serial: "", item: acc[i], part: `${i + 2} of ${n}` };
+    ok = await printCanvas("tag", await tagCanvas(a), 1, a, `${tagWhat(a)} · ${acc[i]}`, { wait: i < acc.length - 1 });
+  }
+  if (ok) {
+    try { localStorage.setItem("lastTag", JSON.stringify(device)); } catch {}
+    form.customer.value = form.ticket.value = form.contact.value = form.serial.value = form.bin.value = form.accessories.value = "";
+    cwAuto = { customer: "", contact: "" }; cwInfo(""); cwSeq++;
     form.copies.value = 1; form.ticket.focus(); drawTagPreview(); loadCustomers();
   }
 };
@@ -976,3 +993,13 @@ window.addEventListener("focus", rollDate);
   setInterval(loadPrinters, 15000);
   await pollInbox(false); setInterval(pollInbox, 2000);          // only labels that arrive from now on
 })();
+
+// ---- intake: a barcode scanner types the serial and presses Enter — move on instead of printing
+form.serial.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); form.bin.focus(); } });
+form.bin.addEventListener("keydown", e => { if (e.key === "Enter" && !form.ticket.value.trim()) { e.preventDefault(); form.ticket.focus(); } });
+$$("#acc-chips .chip").forEach(b => b.onclick = () => {
+  const list = accessories();
+  if (!list.some(x => x.toLowerCase() === b.textContent.toLowerCase())) list.push(b.textContent);
+  form.accessories.value = list.join(", "); drawTagPreview();
+});
+["serial", "bin", "accessories"].forEach(n => form[n].addEventListener("input", () => drawTagPreview()));

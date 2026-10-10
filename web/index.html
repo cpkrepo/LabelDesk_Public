@@ -37,6 +37,18 @@
           <label class="check contactcheck"><input type="checkbox" name="showContact"> On the tag</label>
         </div>
         <div class="row">
+          <label>Serial # <small>(optional — scan it)</small><input name="serial" autocomplete="off" spellcheck="false"></label>
+          <label class="bin">Shelf / bin <small>(optional)</small><input name="bin" autocomplete="off"></label>
+        </div>
+        <label>Accessories <small>(optional — each gets its own tag with the same ticket #)</small>
+          <input name="accessories" autocomplete="off" placeholder="e.g. Charger, Dock"></label>
+        <div class="chips" id="acc-chips">
+          <button type="button" class="chip">Charger</button><button type="button" class="chip">Power brick</button>
+          <button type="button" class="chip">Dock</button><button type="button" class="chip">Bag</button>
+          <button type="button" class="chip">Mouse</button><button type="button" class="chip">Keyboard</button>
+          <button type="button" class="chip">Monitor</button>
+        </div>
+        <div class="row">
           <label class="check"><input type="checkbox" name="barcode"> Barcode of the ticket #</label>
           <label class="copies">Copies<input name="copies" type="number" min="1" max="99" value="1"></label>
         </div>

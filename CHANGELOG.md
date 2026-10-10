@@ -7,6 +7,11 @@ installer attached) and any of them can be brought back with `tools/rollback.sh 
 the owner's `tools/update.sh` turns that heading into the version number when it publishes.
 
 ## Unreleased
+- **Intake tags:** optional **Serial #** (scan it off the laptop — the scanner's Enter moves on instead of printing) and
+  **Shelf / bin**, printed on one small line and searchable in History.
+- **Accessory tags:** list what came with the device (or tap Charger, Dock, Bag…) and LabelDesk prints the device tag
+  ("1 of 3") plus one tag per accessory with the same ticket # and barcode. Imported templates can use {serial}, {bin}
+  and {item} too.
 - **More barcode types:** Code 39, UPC-A, EAN-13 and QR next to Code 128. Imported DYMO Connect templates now draw the
   barcode type they were made with (QR included); Settings → Tag barcode picks Code 128 or Code 39 for the ticket
   barcode. Everything a technician scans stays 1D; QR is for customers' phones.

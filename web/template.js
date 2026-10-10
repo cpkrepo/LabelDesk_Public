@@ -7,7 +7,7 @@
 // Import guesses them from the object names / sample text; the user checks them in the template panel.
 // Templates live per PC (localStorage), like Rotate 180° and the text position.
 
-const FIELDS = ["company", "customer", "received", "ticket"];
+const FIELDS = ["company", "customer", "received", "ticket", "serial", "bin", "item"];
 const DPI = 300;
 const FONT_STACK = '"DejaVu Sans", "Liberation Sans", Arial, sans-serif';
 
@@ -123,6 +123,10 @@ export function guessFormat(name, text, barcode) {
   const DATE = /\d{1,2}\/\d{1,2}\/\d{2,4}/;
   if (/receiv|date/.test(n) || has(DATE) || has(/receiv/i))                 // "Received: 09/30/2026" → "Received: {received}"
     return has(DATE) ? text.replace(DATE, "{received}") : has(/receiv/i) ? `${text.trimEnd()} {received}` : "{received}";
+  if (/serial|s\/n|\bsn\b/.test(n) || has(/^\s*(s\/n|serial)/i))            // "S/N: PF3XK2LQ" → "S/N: {serial}"
+    return has(/^\s*(s\/n|serial)[^:]*:/i) ? text.replace(/(:\s*).*$/s, "$1{serial}") : "{serial}";
+  if (/\bbin\b|shelf|location/.test(n)) return has(/:/) ? text.replace(/(:\s*).*$/s, "$1{bin}") : "{bin}";
+  if (/accessor|item|part/.test(n)) return "{item}";
   if (/contact|customer|person/.test(n)) return "{customer}";
   if (/company|client|name|address/.test(n)) return "{company}";
   return text;                                                             // static text (shop name, notes…)
@@ -133,7 +137,8 @@ export function drawTemplate(ctx, tpl, f, DW, DH, { drawBarcode, usDate }) {
   const r = tpl.rect || { x: 0, y: 0, w: DW / DPI, h: DH / DPI };
   const s = Math.min(DW / (r.w * DPI), DH / (r.h * DPI));                 // DYMO's printable rect → ours (≈ 1)
   const px = v => v * DPI * s;
-  const values = { company: f.customer || "", customer: f.contact || "", received: usDate(f.received), ticket: f.ticket || "" };
+  const values = { company: f.customer || "", customer: f.contact || "", received: usDate(f.received), ticket: f.ticket || "",
+                   serial: f.serial || "", bin: f.bin || "", item: f.item ? `${f.item}${f.part ? ` (${f.part})` : ""}` : (f.part || "") };
   const fill = fmt => fmt.replace(/\{(\w+)\}/g, (m, k) => (k in values ? values[k] : m));
   ctx.fillStyle = "#000"; ctx.textBaseline = "alphabetic";
   for (const o of tpl.objects) {

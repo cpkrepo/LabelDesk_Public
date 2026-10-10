@@ -28,6 +28,10 @@ setTimeout(async () => {
   out.template_images = tpl.objects.filter(o => o.kind === "image").length;
   out.template_bar = tag(f("Acme Dental Group", true), 0, tpl);
   out.blank = tag({ free: "FRAGILE\nScreen cracked" });
+  // intake: serial + bin line; an accessory tag; the device tag of a set with a long name and a contact (the fullest tag)
+  out.intake_bar = tag({ ...f("Acme Dental Group", true), serial: "PF3XK2LQ", bin: "B3", part: "1 of 3" });
+  out.accessory_bar = tag({ ...f("Acme Dental Group", true), item: "Charger", part: "2 of 3" });
+  out.full_bar = tag({ ...f("Jonathan Worthington-Smythe Orthodontics", true), contact: "Jane Smith", serial: "5CD1234XYZ", bin: "Shelf 4" });
   // the same template with a Code 39 barcode, and with a DYMO QR object instead (web/barcodes.js through drawTemplate)
   const c39 = parseDymo(DYMO.replace("Code128Auto", "Code39"), "c39.dymo"); await templateImagesReady(c39);
   out.template_c39 = tag(f("Acme Dental Group", true), 0, c39);
