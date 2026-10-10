@@ -147,6 +147,10 @@
           <option value="30321">30321 Large Address · 1.4″ × 3½″</option>
         </select></label>
       <p class="hint" id="roll-auto"></p>
+      <h2>Printers</h2>
+      <div class="printer-cards" id="printer-cards"></div>
+      <p class="hint">A printer that gets paused (switched off, cable out) is resumed by itself once it answers again
+        (Fedora and Mac; on Windows press Resume).</p>
       <h2>Printers on the network</h2>
       <p class="hint">LabelDesk looks for the DYMO printers by itself when it starts and every few minutes: it sets up a
         printer it finds for the first time and follows one whose address changed. Other DYMO printers it finds are listed
@@ -212,9 +216,16 @@
   <!-- ================= history ================= -->
   <section id="tab-history" class="tab" hidden>
     <div class="card">
-      <h2>Printed <small>last 60</small></h2>
-      <input id="hist-filter" placeholder="Filter by customer or ticket…">
+      <h2>Printed <small id="hist-count"></small></h2>
+      <div class="row hist-tools">
+        <input id="hist-filter" type="search" placeholder="Search everything printed: customer, ticket, serial, tracking #…">
+        <select id="hist-kind"><option value="">All labels</option><option value="tag">Inventory tags</option><option value="ship">Shipping labels</option></select>
+        <label class="hint">From <input type="date" id="hist-since"></label>
+        <label class="hint">to <input type="date" id="hist-until"></label>
+        <a class="ghost button" id="hist-csv" href="api/history.csv" download>Export CSV</a>
+      </div>
       <table id="history"><thead><tr><th>When</th><th>Label</th><th>Details</th><th>Copies</th><th>Printed</th><th></th></tr></thead><tbody></tbody></table>
+      <div class="row actions"><button class="ghost" type="button" id="hist-more" hidden>Show more</button></div>
     </div>
   </section>
 </main>

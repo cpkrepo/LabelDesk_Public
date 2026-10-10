@@ -473,3 +473,84 @@ class TagLabelSetting(ServerBase):
         self.call("settings/tag-label", {"label": "30252"})
         self.assertTrue(app.config()["flip_tag"])
         app.save_config(flip_tag=False)
+
+
+class HistorySearch(ServerBase):
+    """History: searched on the server over everything printed, filters, 'Show more' paging, CSV export."""
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = app.db()
+        with c:
+            c.execute("DELETE FROM printed")
+            rows = [("tag", "2026-10-01T09:00:00", {"customer": "José Peña", "ticket": "75001", "serial": "PF3XK2LQ"}, None),
+                    ("tag", "2026-10-02T09:00:00", {"customer": "Acme 100%_Co", "ticket": "75002"}, None),
+                    ("ship", "2026-10-03T09:00:00", {"note": "UPS"}, "1Z999AA10123456784"),
+                    ("tag", "2026-10-04T09:00:00", {"free": "Line one\nLine two"}, None)]
+            for i in range(70):
+                rows.append(("tag", f"2026-09-{1 + i % 28:02d}T08:00:00", {"customer": f"Old {i}", "ticket": str(70000 + i)}, None))
+            for kind, at, f, trk in rows:
+                c.execute("INSERT INTO printed(kind, at, copies, fields, state, tracking) VALUES(?,?,?,?,?,?)",
+                          (kind, at, 1, json.dumps(f), "done", trk))
+        c.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        c = app.db()
+        with c:
+            c.execute("DELETE FROM printed")                          # other tests count history rows
+        c.close()
+        super().tearDownClass()
+
+    def find(self, query):
+        return self.call("history?" + query)[1]["items"]
+
+    def test_search_reaches_everything_and_non_ascii(self):
+        self.assertEqual([h["fields"]["ticket"] for h in self.find("q=Pe%C3%B1a")], ["75001"])     # José Peña
+        self.assertEqual([h["fields"]["ticket"] for h in self.find("q=pf3xk")], ["75001"])        # serial, any case
+        self.assertEqual(len(self.find("q=1Z999")), 1)                                            # tracking number
+        self.assertEqual([h["fields"]["ticket"] for h in self.find("q=100%25_")], ["75002"])      # % and _ are literal
+        self.assertEqual(len(self.find("q=Old%2069")), 1)                                         # older than the first page
+
+    def test_filters_and_paging(self):
+        self.assertEqual({h["kind"] for h in self.find("kind=ship")}, {"ship"})
+        self.assertEqual(len(self.find("since=2026-10-02&until=2026-10-03")), 2)                 # 'until' day included
+        first = self.find("limit=60")
+        more = self.find(f"limit=60&before={first[-1]['id']}")
+        self.assertEqual((len(first), len(more)), (60, 14))
+        self.assertFalse({h["id"] for h in first} & {h["id"] for h in more})
+
+    def test_csv_export(self):
+        req = urllib.request.Request(f"http://127.0.0.1:{self.srv.server_port}/api/history.csv?q=Pe%C3%B1a")
+        with urllib.request.urlopen(req) as r:
+            disp, body = r.headers["Content-Disposition"], r.read().decode("utf-8")
+        self.assertIn("attachment", disp)
+        lines = body.lstrip("﻿").splitlines()
+        self.assertEqual(lines[0].split(",")[:3], ["when", "label", "customer"])
+        self.assertEqual(len(lines), 2)
+        self.assertIn("José Peña", lines[1])
+        self.assertIn("PF3XK2LQ", lines[1])
+
+
+class AutoResume(unittest.TestCase):
+    """A paused queue is resumed by itself once its printer answers again (Fedora/Mac)."""
+    def run_heal(self, state, accepting, answers):
+        with mock.patch.object(app.ipp, "printer", return_value={"state": state, "accepting": accepting, "reasons": []}), \
+                mock.patch.object(app.AUTO, "host_for", return_value=("192.0.2.5", 9100)), \
+                mock.patch.object(app.AUTO.ops, "answers", return_value=answers), \
+                mock.patch.object(app, "config", return_value={**app.config(), "auto_resume": True}), \
+                mock.patch.object(app, "resume") as resume:
+            before = len(app.AUTO.since(0))
+            app.heal_once()
+            return resume.call_args_list, app.AUTO.since(0)[before:]
+
+    def test_resumes_when_the_printer_is_back(self):
+        calls, events = self.run_heal("stopped", True, True)
+        self.assertEqual([c.args[0] for c in calls], ["tag", "ship"])
+        self.assertIn("resumed it", events[0]["text"])
+
+    def test_leaves_it_paused_while_the_printer_is_off(self):
+        self.assertEqual(self.run_heal("stopped", False, False)[0], [])
+
+    def test_leaves_working_queues_alone(self):
+        self.assertEqual(self.run_heal("idle", True, True)[0], [])

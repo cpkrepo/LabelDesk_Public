@@ -173,12 +173,49 @@ def row(hid):
     return dict(r) if r else None
 
 
-def history(limit=80):
+def history(limit=80, q="", kind="", since="", until="", before=0):
+    """Printed labels, newest first, searched over EVERYTHING ever printed on this PC: q matches any field (customer,
+    company, ticket, serial, bin, free text…) or the tracking number; kind tag/ship; since/until YYYY-MM-DD (inclusive);
+    before = an id, for "Show more"."""
+    where, args = [], []
+    if q.strip():
+        esc_like = lambda t: "%" + t.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"   # noqa: E731
+        # fields are stored by json.dumps (non-ASCII as \\uXXXX, quotes escaped): search them in that form
+        where.append("(fields LIKE ? ESCAPE '\\' OR IFNULL(tracking, '') LIKE ? ESCAPE '\\')")
+        args += [esc_like(json.dumps(q.strip())[1:-1]), esc_like(q.strip())]
+    if kind in ("tag", "ship"):
+        where.append("kind = ?"); args.append(kind)
+    if since:
+        where.append("at >= ?"); args.append(since)
+    if until:
+        where.append("at < ?"); args.append(until + "T99")                # the whole 'until' day
+    if before:
+        where.append("id < ?"); args.append(int(before))
+    sql = "SELECT * FROM printed" + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY id DESC LIMIT ?"
     c = db()
-    rows = [dict(r) | {"fields": json.loads(r["fields"])} for r in
-            c.execute("SELECT * FROM printed ORDER BY id DESC LIMIT ?", (limit,))]
+    rows = [dict(r) | {"fields": json.loads(r["fields"])} for r in c.execute(sql, (*args, int(limit)))]
     c.close()
     return rows
+
+
+HISTORY_CSV = ["when", "label", "customer", "company", "ticket", "received", "serial", "bin", "text", "tracking", "copies",
+               "printed"]
+
+
+def history_csv(**filters):
+    """The same search as a spreadsheet (Excel / Numbers / LibreOffice open it)."""
+    import csv
+    import io
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(HISTORY_CSV)
+    for r in history(limit=100000, **filters):
+        f = r["fields"]
+        w.writerow([r["at"].replace("T", " "), "Inventory tag" if r["kind"] == "tag" else "Shipping label",
+                    f.get("customer", ""), f.get("company", ""), f.get("ticket", ""), f.get("received", ""),
+                    f.get("serial", ""), f.get("bin", ""), (f.get("free") or "").replace("\n", " / "), r.get("tracking") or "",
+                    r["copies"], {"done": "yes", "failed": "no"}.get(r.get("state"), r.get("state") or "")])
+    return "\ufeff" + out.getvalue()                                  # BOM: Excel reads it as UTF-8
 
 
 def customers(limit=400):
@@ -779,6 +816,39 @@ class QueueOps:
 AUTO = autoprint.Auto(QueueOps(), can_manage=not WINDOWS)
 
 
+def heal_once():
+    """A queue that got paused (a printer that was off, a cable out) is resumed once its printer answers again — no more
+    "press Resume". Fedora/Mac; Windows needs an admin for it, so there the bar still offers Resume. Off with
+    "auto_resume": false."""
+    if WINDOWS or not config().get("auto_resume", True):
+        return
+    for kind in ("tag", "ship"):
+        q = queue_for(kind)
+        try:
+            p = ipp.printer(q)
+        except (LookupError, OSError):
+            continue
+        if not (p["state"] == "stopped" or not p["accepting"]):
+            continue
+        ip, port = AUTO.host_for(kind)
+        if ip and not AUTO.ops.answers(ip, port):
+            continue                                                   # still off: leave it paused
+        try:
+            resume(kind)
+            AUTO.event(f"The {'550 Turbo' if kind == 'tag' else '5XL'} was paused — it's answering again, so LabelDesk resumed it.")
+        except RuntimeError as e:
+            print("auto-resume:", e, flush=True)
+
+
+def heal_loop(every=60):
+    while True:
+        time.sleep(every)
+        try:
+            heal_once()
+        except Exception as e:                                         # noqa: BLE001 — never let it die
+            print("auto-resume:", repr(e), flush=True)
+
+
 def expected_stock(kind, cfg=None):
     return labels(cfg)[kind]["stock"].split()[0]
 
@@ -1019,8 +1089,19 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError:
                     return self.send_json({"error": "no logo on this PC"}, 404)
                 return self.send_bytes(raw, "image/jpeg" if raw[:2] == b"\xff\xd8" else "image/png")
+            if path == "/api/history.csv":
+                f = {k: (q.get(k) or [""])[0] for k in ("q", "kind", "since", "until")}
+                body = history_csv(**f).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/csv; charset=utf-8")
+                self.send_header("Content-Disposition", f'attachment; filename="labeldesk-history-{datetime.now():%Y-%m-%d}.csv"')
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if path == "/api/history":
-                items = history()
+                f = {k: (q.get(k) or [""])[0] for k in ("q", "kind", "since", "until")}
+                items = history(limit=min(500, int((q.get("limit") or ["60"])[0])), before=int((q.get("before") or ["0"])[0]), **f)
                 for r in [r for r in items if r["state"] == "sent" and r["job"]][:10]:   # nobody watched it finish
                     try:
                         r.update(state=job_status(r["id"])["state"])
@@ -1194,6 +1275,7 @@ def main():
     threading.Thread(target=INBOX.run, daemon=True).start()
     if cfg.get("auto_printers", True):
         threading.Thread(target=AUTO.run, daemon=True).start()
+    threading.Thread(target=heal_loop, daemon=True).start()
     try:
         migrate_logo()
     except OSError as e:

@@ -781,12 +781,32 @@ $("#ship-print").onclick = async () => {
 
 // ------------------------------------------------------------------ history
 let HIST = [];
-async function loadHistory() {
-  HIST = (await api("history")).items; renderHistory();
+// History: searched on the server over everything ever printed on this PC; 60 at a time, "Show more" for older
+const HIST_PAGE = 60;
+function histQuery() {
+  const p = new URLSearchParams();
+  const v = { q: $("#hist-filter").value.trim(), kind: $("#hist-kind").value, since: $("#hist-since").value, until: $("#hist-until").value };
+  for (const [k, x] of Object.entries(v)) if (x) p.set(k, x);
+  return p;
 }
+async function loadHistory(more = false) {
+  const p = histQuery();
+  $("#hist-csv").href = "api/history.csv" + (p.toString() ? "?" + p : "");
+  p.set("limit", HIST_PAGE);
+  if (more && HIST.length) p.set("before", HIST[HIST.length - 1].id);
+  const items = (await api("history?" + p)).items;
+  HIST = more ? HIST.concat(items) : items;
+  $("#hist-more").hidden = items.length < HIST_PAGE;
+  $("#hist-count").textContent = histQuery().toString() ? `${HIST.length}${items.length < HIST_PAGE ? "" : "+"} found` : `newest first`;
+  renderHistory();
+}
+let histTimer;
+const histSearch = () => { clearTimeout(histTimer); histTimer = setTimeout(() => loadHistory(), 250); };
+["#hist-filter"].forEach(s => $(s).oninput = histSearch);
+["#hist-kind", "#hist-since", "#hist-until"].forEach(s => $(s).onchange = () => loadHistory());
+$("#hist-more").onclick = () => loadHistory(true);
 function renderHistory() {
-  const q = $("#hist-filter").value.trim().toLowerCase();
-  const rows = HIST.filter(h => !q || (JSON.stringify(h.fields) + (h.tracking || "")).toLowerCase().includes(q));
+  const rows = HIST;
   const state = h => ({ done: "✓", failed: `<span class="bad" title="${esc(h.message)}">✗ not printed</span>`,
                          sent: "…", sending: "…" }[h.state] ?? "");
   $("#history tbody").innerHTML = rows.map(h => `<tr><td>${esc(h.at.replace("T", " ").slice(0, 16))}</td>
@@ -811,7 +831,7 @@ function renderHistory() {
     setTimeout(loadHistory, 1500);
   });
 }
-$("#hist-filter").oninput = renderHistory;
+
 
 // ------------------------------------------------------------------ tabs, printers, keys
 function showTab(t) {
@@ -855,6 +875,7 @@ async function loadPrinters() {
     }
     $("#roll-auto").textContent = tr?.stock ? `The 550 Turbo reports ${tr.name}${tr.remaining != null ? `, ${tr.remaining} left` : ""}: LabelDesk picks this by itself.` : "";
     showNetwork(p.network);
+    showPrinterCards(p);
     const ev = (await api("printers/events?after=" + eventsAfter)).events;
     for (const e of ev) { toast(e.text, e.level === "bad"); eventsAfter = Math.max(eventsAfter, e.id); }
     $$("[data-resume]").forEach(b => b.onclick = async () => {
@@ -862,6 +883,17 @@ async function loadPrinters() {
       loadPrinters();
     });
   } catch { $("#printers").innerHTML = `<span>LabelDesk server not answering</span>`; }
+}
+// Settings → Printers: one card per printer — state, roll, labels left, where it is
+function showPrinterCards(p) {
+  $("#printer-cards").innerHTML = [["tag", "550 Turbo · tags"], ["ship", "5XL · shipping"]].map(([k, n]) => {
+    const x = p[k], r = x.roll;
+    return `<div><b>${n}</b>
+      <span class="${x.ok ? "" : "bad"}">${esc(x.status)}</span><br>
+      ${r ? `Roll: ${esc(r.name || r.sku || "unknown")}${r.remaining != null ? ` · <b style="display:inline">${r.remaining}</b> left` : ""}${r.low ? " · <span class='bad'>low</span>" : ""}<br>`
+          : `<span class="hint">Roll: not reported</span><br>`}
+      <span class="hint">Queue ${esc(x.queue || "—")}</span></div>`;
+  }).join("");
 }
 // Settings → Printers on the network
 const MODEL = { "550T": "LabelWriter 550 Turbo", "550": "LabelWriter 550", "5XL": "LabelWriter 5XL" };

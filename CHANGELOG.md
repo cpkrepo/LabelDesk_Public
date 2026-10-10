@@ -7,6 +7,10 @@ installer attached) and any of them can be brought back with `tools/rollback.sh 
 the owner's `tools/update.sh` turns that heading into the version number when it publishes.
 
 ## Unreleased
+- **History searches everything ever printed** on this PC — customer, ticket, serial, tracking number, any text — with
+  filters for tags/shipping and dates, **Show more** for older labels, and **Export CSV** for Excel.
+- **Paused printers resume by themselves** once they answer again (Fedora and Mac), and Settings → Printers shows each
+  printer's state, roll and labels left.
 - **Printers set themselves up** (Fedora; on the Mac, macOS doesn't allow it from the background yet, and on Windows it's
   untested — Settings says when it can't look). When LabelDesk starts and every few minutes it looks for the DYMO
   printers on the network: a printer it finds for the first time is set up, and a printer that got a new address is followed — no more
