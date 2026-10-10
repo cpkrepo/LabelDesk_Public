@@ -14,3 +14,7 @@
   Never ask the user to paste keys into chat.
 - Not yet tested against the real ConnectWise (no keys yet) — only tests/fake_connectwise.py. First real test:
   Settings → Test connection, then a known ticket.
+- 0.10 (O): `connectwise.device()` = company/configurations?conditions=serialNumber="…" (any company; serial limited to
+  [A-Za-z0-9-_./ ] so nothing can be injected into the condition). Not yet tried against the real ConnectWise — check the
+  condition syntax there on first use. "Picked up" (P) is LabelDesk's own record (printed.collected), never written to CW.
+

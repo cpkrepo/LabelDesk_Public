@@ -13,6 +13,7 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from unittest import mock
 
+os.environ["LABELDESK_AUTO_PRINTERS"] = "0"                    # no printer polling in tests
 os.environ["LABELDESK_DATA"] = tempfile.mkdtemp()
 os.environ["LABELDESK_KEYS"] = "file"
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "server"))

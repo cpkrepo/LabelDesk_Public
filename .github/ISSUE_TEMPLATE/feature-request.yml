@@ -1,0 +1,22 @@
+name: Feature request
+description: Ask for something LabelDesk should do (the owner decides and schedules it)
+title: "Feature: "
+labels: ["feature request"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What do you want LabelDesk to do?
+      description: The job you're trying to get done, in your own words. Never paste customer names, addresses or label images — this repo is public.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: When does it come up?
+      description: e.g. "every drop-off", "when setting up 20 laptops for a customer"
+  - type: dropdown
+    id: where
+    attributes:
+      label: Which computer?
+      options: [Windows, Mac, Fedora, All]

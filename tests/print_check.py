@@ -4,7 +4,7 @@ a 4×6 test pattern the way the page does (PNG + grey pixels), waits until Label
 the "printer" received — size, margins, and that the label isn't turned or mirrored (a solid block sits top-left).
 
     python3 tests/fake_labelwriter.py /tmp/ldjobs &   # + queues Dymo-550-Turbo / Dymo-5XL → socket://127.0.0.1:9100
-    python3 tests/print_check.py /tmp/ldjobs [--url http://127.0.0.1:8792]
+    python3 tests/print_check.py /tmp/ldjobs [/tmp/ldjobs-5xl …] [--url http://127.0.0.1:8792]
 
 Used by .github/workflows/macos.yml on a real Mac with DYMO Connect for Mac's driver; works on Fedora too.
 Reference (Fedora, DYMO's Linux driver, 2026-10-10): tag 304 × 962–963 dots, 4×6 1200 × 1798–1800.
@@ -80,14 +80,15 @@ def check_pbm(path, kind):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("jobs", help="the fake printer's output folder")
+    ap.add_argument("jobs", nargs="+", help="the fake printers' output folder(s)")
     ap.add_argument("--url", default="http://127.0.0.1:8792")
     a = ap.parse_args()
     cfg = call(a.url, "config")
     print(f"LabelDesk {cfg['version']} on {cfg['platform']}")
     failed = False
     for kind, (w, h) in SIZES.items():
-        before = set(glob.glob(os.path.join(a.jobs, "*.pbm")))
+        pbms = lambda: {f for d in a.jobs for f in glob.glob(os.path.join(d, "*.pbm"))}  # noqa: E731
+        before = pbms()
         g = pattern(w, h)
         r = call(a.url, "print", {"kind": kind, "png": "data:image/png;base64," + base64.b64encode(png(w, h, g)).decode(),
                                   "gray": {"w": w, "h": h, "data": base64.b64encode(g).decode()},
@@ -99,7 +100,7 @@ def main():
             if state["state"] in ("done", "failed"):
                 break
             time.sleep(1)
-        new = sorted(set(glob.glob(os.path.join(a.jobs, "*.pbm"))) - before)
+        new = sorted(pbms() - before, key=os.path.getmtime)
         if state.get("state") != "done" or not new:
             print(f"✗ {kind}: LabelDesk says {state}; new jobs at the printer: {new}")
             failed = True

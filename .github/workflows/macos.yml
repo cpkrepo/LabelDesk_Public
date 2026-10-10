@@ -1,14 +1,16 @@
-# The Mac version on a real Mac, every push: unit tests on the Python and bash macOS ships (3.9 / 3.2), then DYMO
-# Connect for Mac's driver + tools/install-all.sh + a print of a tag and a 4×6 through that driver to the fake
-# LabelWriter (tests/print_check.py checks size, margins and orientation of what the "printer" got).
+# The Mac version on a real Mac, every push and pull request: unit tests on the Python and bash macOS ships (3.9 / 3.2),
+# DYMO Connect for Mac's driver, LabelDesk installed with NO printer setup while two fake LabelWriters announce
+# themselves on Bonjour → LabelDesk must add both queues itself and read their rolls (tests/auto_check.py), then a tag
+# and a 4×6 print through DYMO's Mac driver (tests/print_check.py checks size, margins, orientation).
 name: macOS
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch: {}
 permissions:
-  contents: read
+  contents: write                # the release job attaches LabelDesk-<v>.pkg; the test jobs only read
 jobs:
   mac:
     runs-on: macos-latest
@@ -33,18 +35,37 @@ jobs:
           sudo installer -pkg ~/dymo.pkg -target / || echo "installer reported a problem — checking the driver files anyway"
           ls -l /Library/Printers/PPDs/Contents/Resources/lw550t.ppd.gz /Library/Printers/PPDs/Contents/Resources/lw5xl.ppd.gz \
                 /Library/Printers/DYMO/Filters/V2/raster2dymolw
-      - name: Fake LabelWriter + tools/install-all.sh
+      # macOS's Local Network privacy stops a LaunchAgent's own Bonjour scan, so on the Mac LabelDesk asks CUPS (cupsd is
+      # a system daemon): the fakes are registered with the Mac's own Bonjour (dns-sd -R), like a real printer announces
+      - name: Two fake LabelWriters on the Mac's Bonjour; LabelDesk installed WITHOUT printer setup
         run: |
-          mkdir -p /tmp/ldjobs
-          nohup /usr/bin/python3 tests/fake_labelwriter.py /tmp/ldjobs > /tmp/fake.log 2>&1 &
-          sleep 1
-          tools/install-all.sh 127.0.0.1 127.0.0.1
-      - name: Print through the Mac driver
-        run: /usr/bin/python3 tests/print_check.py /tmp/ldjobs
+          mkdir -p /tmp/ld-tag /tmp/ld-ship
+          nohup /usr/bin/python3 tests/fake_labelwriter.py /tmp/ld-tag --bind 0.0.0.0 --port 9100 --roll 30252 > /tmp/fake-tag.log 2>&1 &
+          nohup /usr/bin/python3 tests/fake_labelwriter.py /tmp/ld-ship --bind 0.0.0.0 --port 9101 --roll 1744907 --left 212 > /tmp/fake-ship.log 2>&1 &
+          nohup dns-sd -R "DYMO LabelWriter 550 Turbo" _pdl-datastream._tcp local 9100 "ty=DYMO LabelWriter 550 Turbo" > /tmp/dnssd-tag.log 2>&1 &
+          nohup dns-sd -R "DYMO LabelWriter 5XL" _pdl-datastream._tcp local 9101 "ty=DYMO LabelWriter 5XL" > /tmp/dnssd-ship.log 2>&1 &
+          sleep 2
+          perl -e 'alarm 20; exec @ARGV' lpinfo --include-schemes dnssd -v || true
+          tools/install-app.sh
+      - name: Printers set themselves up through CUPS (queues by Bonjour name)
+        run: |
+          /usr/bin/python3 tests/auto_check.py --wait 120 --no-rolls
+          lpstat -v
+      - name: Print through the Mac driver on the queues LabelDesk added
+        run: |
+          /usr/bin/python3 tests/print_check.py /tmp/ld-tag /tmp/ld-ship
+          tools/doctor.sh
+      - name: Bonjour diagnostics
+        if: always()
+        run: |
+          cd server && /usr/bin/python3 -c 'import dymo; print("browse from the shell:", dymo.browse(3), dymo.LAST)' || true
+          curl -s http://127.0.0.1:8792/api/printers | /usr/bin/python3 -c 'import json,sys; print("LabelDesk (LaunchAgent) network:", json.load(sys.stdin)["network"])' || true
+          perl -e 'alarm 5; exec @ARGV' dns-sd -B _pdl-datastream._tcp local. || true
+          perl -e 'alarm 15; exec @ARGV' lpinfo --include-schemes dnssd -v || true
       - name: Logs
         if: always()
         run: |
-          cat /tmp/fake.log || true
+          cat /tmp/fake-tag.log /tmp/fake-ship.log /tmp/dnssd-*.log || true
           tail -50 ~/Library/Logs/LabelDesk.log || true
           lpstat -t || true
           sudo tail -40 /var/log/cups/error_log || true
@@ -52,4 +73,43 @@ jobs:
         if: always()
         with:
           name: printed-labels
-          path: /tmp/ldjobs/*.pbm
+          path: /tmp/ld-*/*.pbm
+
+  # The Mac installer package (unsigned): built and installed on a clean Mac like a coworker would — LabelDesk must end up
+  # cloned in ~/LabelDesk_Public and running. On a version tag it's attached to that release.
+  pkg:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    env:
+      DYMO_PKG_URL: https://download.dymo.com/dymo/Software/Mac/DCDMac1.4.3.103.pkg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/dymo.pkg
+          key: ${{ env.DYMO_PKG_URL }}
+      - name: DYMO Connect for Mac (as on a shop Mac)
+        run: |
+          [ -s ~/dymo.pkg ] || curl -fsSL -o ~/dymo.pkg "$DYMO_PKG_URL"
+          sudo installer -pkg ~/dymo.pkg -target / || true
+      - name: Build LabelDesk.pkg
+        run: |
+          branch=${GITHUB_HEAD_REF:-main}
+          LABELDESK_REPO_URL="https://github.com/${GITHUB_REPOSITORY}.git" tools/mac/build-pkg.sh --branch "$branch"
+      - name: Install it like a coworker would, check LabelDesk runs from ~/LabelDesk_Public
+        run: |
+          echo "console user: $(stat -f%Su /dev/console)"
+          sudo installer -pkg dist/LabelDesk-*.pkg -target / || { cat /tmp/labeldesk-install.log; exit 1; }
+          cat /tmp/labeldesk-install.log
+          test -d ~/LabelDesk_Public/.git && test -f ~/Library/LaunchAgents/com.labeldesk.app.plist && test -d ~/Applications/LabelDesk.app
+          curl -sf http://127.0.0.1:8792/api/config | /usr/bin/python3 -c 'import json,sys; c=json.load(sys.stdin); print("LabelDesk", c["version"], "on", c["platform"]); assert c["platform"] == "mac"'
+      - name: Attach to the release (version tags)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=$(tr -d '[:space:]' < VERSION)
+          for i in 1 2 3 4 5 6; do gh release view "v$v" >/dev/null 2>&1 && break; sleep 20; done   # the Windows job creates it
+          gh release view "v$v" >/dev/null 2>&1 || gh release create "v$v" --verify-tag --title "LabelDesk $v" --notes "LabelDesk $v"
+          gh release upload "v$v" "dist/LabelDesk-$v.pkg" "dist/LabelDesk-$v.pkg.sha256" --clobber
+

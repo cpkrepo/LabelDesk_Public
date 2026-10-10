@@ -1,9 +1,21 @@
 ---
 name: labeldesk-rollback
-description: Roll LabelDesk back when a new version is bad: publish an older version's code as the next version so every PC (Fedora, Mac, Windows) moves to it. Use for "undo", "go back", "revert".
+description: Roll LabelDesk back when a new version is bad (owner only; others file a rollback request). Use for "undo", "go back", "revert", "roll back".
 ---
 
 # Rolling LabelDesk back
+
+**People do this themselves in the app: Settings → Version** (list from GitHub's releases → Use this version; this PC
+only, held there; owner's PC: "For every PC"). Point users there first. The tools below are what it runs
+(`tools/switch-version.sh <v>|newest [--everyone]` → `tools/rollback.sh`).
+
+**Only the owner publishes versions, rollbacks included** (`tools/rollback.sh` checks: GitHub admin, or
+`git config labeldesk.publisher true`; anyone else gets exit 5). On a technician's PC, don't try to work around it —
+file the request instead and tell the user it went to the owner:
+`gh issue create --repo cpkrepo/LabelDesk_Public --title "Please roll LabelDesk back to <version>" --label rollback --body "<what's wrong>"`
+(or the "Please roll back" form under Issues → New issue).
+
+On the owner's PC:
 
 A version that "sucks" is undone by **publishing an older version's code again as the next version number**. PCs only
 ever update forward, so this is what makes every Fedora/Mac PC (Update now / `tools/update.sh`) and every Windows PC

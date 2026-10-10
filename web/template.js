@@ -7,12 +7,22 @@
 // Import guesses them from the object names / sample text; the user checks them in the template panel.
 // Templates live per PC (localStorage), like Rotate 180° and the text position.
 
-const FIELDS = ["company", "customer", "received", "ticket"];
+const FIELDS = ["company", "customer", "received", "ticket", "serial", "bin", "item"];
 const DPI = 300;
 const FONT_STACK = '"DejaVu Sans", "Liberation Sans", Arial, sans-serif';
 
 const num = (el, sel) => parseFloat(el.querySelector(sel)?.textContent ?? "") || 0;
 const txt = (el, sel) => el.querySelector(sel)?.textContent?.trim() ?? "";
+
+// DYMO Connect's BarcodeFormat / QR objects → web/barcodes.js (anything unknown draws as Code 128, like before)
+export function symbologyOf(dymoFormat) {
+  const f = String(dymoFormat || "").toLowerCase();
+  if (f.startsWith("qr")) return "qr";
+  if (f.startsWith("code39")) return "code39";
+  if (f === "upca" || f === "upc") return "upca";
+  if (f.startsWith("ean13")) return "ean13";
+  return "code128";
+}
 
 // ---- import ---------------------------------------------------------------------------------------------------------
 export function parseDymo(xml, fileName = "template") {
@@ -34,6 +44,11 @@ export function parseDymo(xml, fileName = "template") {
       const src = embeddedImage(o);
       if (src) objects.push({ kind: "image", name, ...box, halign: txt(o, ":scope > HorizontalAlignment") || "Center", src, sample: "(picture)", format: "",
                               scale: txt(o, ":scope > ScaleMode") || "Uniform" });
+      continue;
+    }
+    if (o.tagName === "QRCodeObject") {                                    // DYMO Connect's QR object (its data: Data/DataString)
+      const data = [...o.querySelectorAll("DataString, Data > *")].map(d => d.textContent).join("") || txt(o, ":scope > Data");
+      objects.push({ kind: "barcode", name, ...box, halign, format: guessFormat(name, data, true), sample: data, symbology: "QRCode" });
       continue;
     }
     if (o.tagName === "BarcodeObject") {
@@ -108,6 +123,10 @@ export function guessFormat(name, text, barcode) {
   const DATE = /\d{1,2}\/\d{1,2}\/\d{2,4}/;
   if (/receiv|date/.test(n) || has(DATE) || has(/receiv/i))                 // "Received: 09/30/2026" → "Received: {received}"
     return has(DATE) ? text.replace(DATE, "{received}") : has(/receiv/i) ? `${text.trimEnd()} {received}` : "{received}";
+  if (/serial|s\/n|\bsn\b/.test(n) || has(/^\s*(s\/n|serial)/i))            // "S/N: PF3XK2LQ" → "S/N: {serial}"
+    return has(/^\s*(s\/n|serial)[^:]*:/i) ? text.replace(/(:\s*).*$/s, "$1{serial}") : "{serial}";
+  if (/\bbin\b|shelf|location/.test(n)) return has(/:/) ? text.replace(/(:\s*).*$/s, "$1{bin}") : "{bin}";
+  if (/accessor|item|part/.test(n)) return "{item}";
   if (/contact|customer|person/.test(n)) return "{customer}";
   if (/company|client|name|address/.test(n)) return "{company}";
   return text;                                                             // static text (shop name, notes…)
@@ -118,7 +137,8 @@ export function drawTemplate(ctx, tpl, f, DW, DH, { drawBarcode, usDate }) {
   const r = tpl.rect || { x: 0, y: 0, w: DW / DPI, h: DH / DPI };
   const s = Math.min(DW / (r.w * DPI), DH / (r.h * DPI));                 // DYMO's printable rect → ours (≈ 1)
   const px = v => v * DPI * s;
-  const values = { company: f.customer || "", customer: f.contact || "", received: usDate(f.received), ticket: f.ticket || "" };
+  const values = { company: f.customer || "", customer: f.contact || "", received: usDate(f.received), ticket: f.ticket || "",
+                   serial: f.serial || "", bin: f.bin || "", item: f.item ? `${f.item}${f.part ? ` (${f.part})` : ""}` : (f.part || "") };
   const fill = fmt => fmt.replace(/\{(\w+)\}/g, (m, k) => (k in values ? values[k] : m));
   ctx.fillStyle = "#000"; ctx.textBaseline = "alphabetic";
   for (const o of tpl.objects) {
@@ -134,9 +154,17 @@ export function drawTemplate(ctx, tpl, f, DW, DH, { drawBarcode, usDate }) {
       ctx.drawImage(e.bw, dx, y + (h - dh) / 2, dw, dh);
       continue;
     }
+    if (o.kind === "shape") {                                              // designer: line / box / filled box
+      const t = Math.max(1, Math.round((o.stroke || 0.02) * DPI * s));
+      if (o.shape === "fill") ctx.fillRect(x, y, w, h);
+      else if (o.shape === "box") { ctx.lineWidth = t; ctx.strokeRect(x + t / 2, y + t / 2, w - t, h - t); }
+      else if (w >= h) ctx.fillRect(x, y + (h - t) / 2, w, t);                // a line: across the longer side of its box
+      else ctx.fillRect(x + (w - t) / 2, y, t, h);
+      continue;
+    }
     if (o.kind === "barcode") {
       const data = fill(o.format).trim();
-      if (data) drawBarcode(ctx, data, x, y, w, h);
+      if (data) drawBarcode(ctx, data, x, y, w, h, symbologyOf(o.symbology));
       continue;
     }
     const texts = fill(o.format).split("\n");

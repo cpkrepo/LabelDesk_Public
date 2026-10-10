@@ -24,6 +24,7 @@ import os
 import ipaddress
 import re
 import shutil
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -35,8 +36,11 @@ import urllib.request
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import autoprint
 import barcode
+import sheet
 import connectwise
+import dymo
 import keys
 from inbox import SPOOL, Inbox, downloads_dir
 
@@ -61,11 +65,14 @@ def _read_version():
 
 
 VERSION = _read_version()
+STARTED = time.time()                                            # the page sees a restart by this changing
 # after each print the app asks GitHub for the newest VERSION (a plain GET of one small file; no label content, no IDs)
 REPO = "cpkrepo/LabelDesk_Public"
 UPDATE_URL = f"https://raw.githubusercontent.com/{REPO}/main/VERSION"
 RELEASES_URL = f"https://github.com/{REPO}/releases"
 RELEASE_API = f"https://api.github.com/repos/{REPO}/releases/tags/v{{version}}"
+RELEASES_API = f"https://api.github.com/repos/{REPO}/releases?per_page=40"
+UPGRADE_CODE = "{6B9C2E31-4A57-4D3F-9E1B-2F7C5A0D8E41}"         # windows/labeldesk.wxs — fixed forever
 WEB = os.path.realpath(os.environ.get("LABELDESK_WEB") or os.path.join(HERE, "..", "web"))
 if WINDOWS:
     CONF_FILE = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "LabelDesk", "config.json")
@@ -99,7 +106,8 @@ LABELS = {
 def config():
     c = {"tag_queue": "Dymo-550-Turbo", "ship_queue": "Dymo-5XL", "bind": "127.0.0.1", "port": 8792, "flip_tag": False, "tag_offset_mm": 0,
          "watch_downloads": True, "update_check": True, "update_url": UPDATE_URL, "tag_logo": "",
-         "tag_label": DEFAULT_TAG_STOCK}
+         "tag_label": DEFAULT_TAG_STOCK, "auto_printers": True, "tag_barcode": "code128",
+         "auto_ship": False}
     try:
         with open(CONF_FILE) as f:
             c.update(json.load(f))
@@ -110,6 +118,8 @@ def config():
     c["port"] = int(os.environ.get("LABELDESK_PORT", c["port"]))
     if os.environ.get("LABELDESK_WATCH") == "0":
         c["watch_downloads"] = False
+    if os.environ.get("LABELDESK_AUTO_PRINTERS") == "0":
+        c["auto_printers"] = False
     return c
 
 
@@ -135,7 +145,8 @@ def queue_for(kind):
 
 # ------------------------------------------------------------------ history (SQLite)
 LOCK = threading.Lock()
-COLUMNS = {"state": "TEXT", "message": "TEXT", "image": "TEXT", "tracking": "TEXT"}
+COLUMNS = {"state": "TEXT", "message": "TEXT", "image": "TEXT", "tracking": "TEXT",
+           "collected": "TEXT"}                                     # 0.10: picked up (History → Scan a tag), this PC only
 
 
 _schema_ok = []
@@ -165,12 +176,92 @@ def row(hid):
     return dict(r) if r else None
 
 
-def history(limit=80):
+def history(limit=80, q="", kind="", since="", until="", before=0, ticket="", serial=""):
+    """Printed labels, newest first, searched over EVERYTHING ever printed on this PC: q matches any field (customer,
+    company, ticket, serial, bin, free text…) or the tracking number; kind tag/ship; since/until YYYY-MM-DD (inclusive);
+    before = an id, for "Show more"."""
+    where, args = [], []
+    if q.strip():
+        esc_like = lambda t: "%" + t.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"   # noqa: E731
+        # fields are stored by json.dumps (non-ASCII as \\uXXXX, quotes escaped): search them in that form
+        where.append("(fields LIKE ? ESCAPE '\\' OR IFNULL(tracking, '') LIKE ? ESCAPE '\\')")
+        args += [esc_like(json.dumps(q.strip())[1:-1]), esc_like(q.strip())]
+    if kind in ("tag", "ship"):
+        where.append("kind = ?"); args.append(kind)
+    for key, val in (("ticket", ticket), ("serial", serial)):          # exact field (as json.dumps wrote it)
+        if val.strip():
+            where.append("fields LIKE ? ESCAPE '\\'")
+            args.append("%" + json.dumps({key: val.strip()})[1:-1].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%")
+    if since:
+        where.append("at >= ?"); args.append(since)
+    if until:
+        where.append("at < ?"); args.append(until + "T99")                # the whole 'until' day
+    if before:
+        where.append("id < ?"); args.append(int(before))
+    sql = "SELECT * FROM printed" + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY id DESC LIMIT ?"
     c = db()
-    rows = [dict(r) | {"fields": json.loads(r["fields"])} for r in
-            c.execute("SELECT * FROM printed ORDER BY id DESC LIMIT ?", (limit,))]
+    rows = [dict(r) | {"fields": json.loads(r["fields"])} for r in c.execute(sql, (*args, int(limit)))]
     c.close()
     return rows
+
+
+HISTORY_CSV = ["when", "label", "customer", "company", "ticket", "received", "serial", "bin", "text", "tracking", "copies",
+               "printed"]
+
+
+def history_csv(**filters):
+    """The same search as a spreadsheet (Excel / Numbers / LibreOffice open it)."""
+    import csv
+    import io
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(HISTORY_CSV)
+    for r in history(limit=100000, **filters):
+        f = r["fields"]
+        w.writerow([r["at"].replace("T", " "), "Inventory tag" if r["kind"] == "tag" else "Shipping label",
+                    f.get("customer", ""), f.get("company", ""), f.get("ticket", ""), f.get("received", ""),
+                    f.get("serial", ""), f.get("bin", ""), (f.get("free") or "").replace("\n", " / "), r.get("tracking") or "",
+                    r["copies"], {"done": "yes", "failed": "no"}.get(r.get("state"), r.get("state") or "")])
+    return "\ufeff" + out.getvalue()                                  # BOM: Excel reads it as UTF-8
+
+
+def device_info(serial):
+    """Been here before? This PC's earlier tags with this serial (+ ConnectWise configurations with it when it's on)."""
+    seen = [r for r in history(limit=20, serial=serial) if r["kind"] == "tag" and (r["fields"].get("serial") or "").lower() == serial.strip().lower()]
+    out = {"serial": serial.strip(), "before": [{"at": r["at"], "ticket": r["fields"].get("ticket", ""), "customer": r["fields"].get("customer", ""),
+                                                 "collected": r.get("collected")} for r in seen], "cw": []}
+    st = cw_status()
+    if st["on"]:
+        try:
+            out["cw"] = connectwise.device(cw_creds(), serial)
+        except (connectwise.CWError, LookupError, OSError) as e:
+            out["cwError"] = str(e)
+    return out
+
+
+def ticket_info(number):
+    """Scan a tag (History): everything printed for this ticket here, picked up or not, + the ConnectWise ticket."""
+    n = str(number).strip().lstrip("#")
+    rows = [r for r in history(limit=200, ticket=n) if r["fields"].get("ticket") == n]
+    out = {"ticket": n, "tags": rows, "collected": next((r["collected"] for r in rows if r.get("collected")), None), "cw": None}
+    if cw_status()["on"]:
+        try:
+            out["cw"] = connectwise.ticket(cw_creds(), n)
+        except LookupError:
+            out["cw"] = None
+        except (connectwise.CWError, OSError) as e:
+            out["cwError"] = str(e)
+    return out
+
+
+def set_collected(number, collected):
+    n = str(number).strip().lstrip("#")
+    c = db()
+    with c:
+        c.execute("UPDATE printed SET collected = ? WHERE kind = 'tag' AND fields LIKE ? ESCAPE '\\'",
+                  (datetime.now().isoformat(timespec="seconds") if collected else None,
+                   "%" + json.dumps({"ticket": n})[1:-1].replace("%", "\\%").replace("_", "\\_") + "%"))
+    c.close()
 
 
 def customers(limit=400):
@@ -215,7 +306,7 @@ def keep_image(hid, png):
 RECENT = {}                          # png hash → time: a second identical print within 3 s is a double press
 
 
-def submit(kind, png_bytes, copies, gray=None):
+def submit(kind, png_bytes, copies, gray=None, lab=None):
     """Hand one label to the printer. Fedora: the PNG through CUPS (lp). Windows: the 8-bit grey image through DYMO's
     Windows driver (winprint). → (queue/printer, job id)."""
     if WINDOWS:
@@ -225,13 +316,15 @@ def submit(kind, png_bytes, copies, gray=None):
                                "or Windows Settings → Printers")
         if not gray:
             raise ValueError("the Windows version needs the label as grey pixels (update LabelDesk)")
-        lab = labels()[kind]
+        designed = lab is not None
+        lab = lab or labels()[kind]
+        sku = lab["stock"].split()[0]
         job, _paper = winprint.submit(printer, kind, gray, copies, f"LabelDesk {lab['name']}",
-                                      paper=(lab["stock"].split()[0],) if kind == "tag" else None)
+                                      paper=(sku,) if (kind == "tag" or designed) and sku[:1].isdigit() else None)
         return printer, job
     if MAC and gray:
-        return lp(kind, label_pdf(labels()[kind], *gray), copies, ".pdf")
-    return lp(kind, png_bytes, copies)
+        return lp(kind, label_pdf(lab or labels()[kind], *gray), copies, ".pdf", lab)
+    return lp(kind, png_bytes, copies, lab=lab)
 
 
 def label_pdf(lab, w, h, gray):
@@ -263,7 +356,7 @@ def label_pdf(lab, w, h, gray):
     return bytes(out)
 
 
-def lp(kind, data, copies, suffix=".png"):
+def lp(kind, data, copies, suffix=".png", lab=None):
     """Send one label (PNG, or the exact-size PDF from label_pdf) to its queue at exactly 300 dpi on the right page
     size. → (queue, job number)."""
     queue = queue_for(kind)
@@ -271,7 +364,7 @@ def lp(kind, data, copies, suffix=".png"):
         f.write(data)
         path = f.name
     try:
-        lab = labels()[kind]
+        lab = lab or labels()[kind]
         opts = ["-o", "ppi=300", "-o", "position=center"] if suffix == ".png" else []
         r = subprocess.run(["lp", "-d", queue, "-n", str(copies), "-t", f"LabelDesk {lab['name']}",
                             "-o", f"PageSize={lab['page']}", *opts, path], capture_output=True, text=True, timeout=30)
@@ -288,16 +381,23 @@ def lp(kind, data, copies, suffix=".png"):
     return queue, m.group(1) if m else ""
 
 
-def print_label(kind, png, copies, fields, force=False, gray=None, client_check=None):
+def print_label(kind, png, copies, fields, force=False, gray=None, client_check=None, stock=None):
+    lab = stock_label(stock) if stock else None                   # the designer: any DYMO label (stocks.json)
+    if lab and ("550T" if kind == "tag" else "5XL") not in lab["printers"]:
+        raise ValueError(f"the {'550 Turbo' if kind == 'tag' else '5XL'} doesn't take {lab['name']} labels")
     digest = hashlib.sha1(png + f"{kind}:{copies}".encode()).hexdigest()
     if not force and time.time() - RECENT.get(digest, 0) < 3:
         return {"duplicate": True, "error": "that label was just sent — press Print again to print another"}, 409
     check = None
-    if kind == "ship":
+    if kind == "ship" and not lab:                                # a designed label on the 5XL isn't a carrier label
         # zbar here (Fedora) double-checks; without it (Windows) the browser's ZXing check stands
         check = barcode.check(png) if barcode.available() else (client_check or {"ok": True, "tracking": None})
         if not check.get("ok") and not force:
             return {"needsForce": True, "check": check, "error": check.get("message", "no barcode could be read")}, 422
+    if not force:
+        why = roll_check(kind, lab["sku"] if lab else None)
+        if why:
+            return {"needsForce": True, "roll": True, "error": why}, 422
     with LOCK:
         c = db()
         with c:
@@ -308,7 +408,7 @@ def print_label(kind, png, copies, fields, force=False, gray=None, client_check=
     if kind == "ship":
         update(hid, image=keep_image(hid, png))
     try:
-        queue, job = submit(kind, png, copies, gray)
+        queue, job = submit(kind, png, copies, gray, lab)
     except RuntimeError as e:
         update(hid, state="failed", message=str(e))
         raise
@@ -401,7 +501,8 @@ def check_update(cfg=None, now=None):
         res["canUpdateNow"] = bool(res["local"]) and not res["local"]["dirty"] and not res["local"]["ahead"] \
             and (MAC or bool(shutil.which("systemd-run")))
     res["canInstall"] = res["how"] == "windows"
-    if not res["enabled"]:
+    res["held"] = cfg.get("hold_version") or None                 # Settings → Version: this PC stays on a chosen one
+    if not res["enabled"] or res["held"]:
         return res
     now = time.time() if now is None else now
     if _update["result"] and now - _update["at"] < UPDATE_CACHE_S:
@@ -418,6 +519,67 @@ def check_update(cfg=None, now=None):
         res["error"] = str(e)[:200]
     _update.update(at=now, result=res)
     return res
+
+
+# every DYMO label the 550 / 5XL drivers know (tools/gen-stocks.py → stocks.json) — the designer prints on any of them
+def _load_stocks():
+    try:
+        with open(os.path.join(HERE, "stocks.json")) as f:
+            return {s["id"]: s for s in json.load(f)["stocks"]}
+    except (OSError, ValueError, KeyError):
+        return {}
+
+
+STOCKS = _load_stocks()
+
+
+def stock_label(stock_id):
+    """A stocks.json label in the same shape as LABELS entries (page, inches, printable area). KeyError if unknown."""
+    s = STOCKS[stock_id]
+    w, h = s["size_pt"]
+    return {"name": s["name"], "stock": s["name"], "page": s["page"], "size": s["name"].split(" ", 1)[-1],
+            "width_in": w / 72, "height_in": h / 72, "safe_in": [v / 72 for v in s["area_pt"]], "sku": s["sku"],
+            "printers": s["printers"]}
+
+
+# ---- shop templates: designer layouts shared through the repo (templates/*.json — reviewed like any change)
+TEMPLATES_DIR = os.environ.get("LABELDESK_TEMPLATES") or os.path.join(ROOT, "templates")
+
+
+def shared_templates():
+    out = []
+    try:
+        names = sorted(n for n in os.listdir(TEMPLATES_DIR) if n.endswith(".json"))
+    except OSError:
+        return out
+    for n in names:
+        try:
+            with open(os.path.join(TEMPLATES_DIR, n), encoding="utf-8") as f:
+                t = json.load(f)
+            if isinstance(t, dict) and isinstance(t.get("objects"), list):
+                out.append({**t, "id": "shop:" + n[:-5], "shared": True})
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+def share_template(t):
+    """Settings-free sharing: write the layout into the checkout's templates/ — tools/update.sh then sends it to the owner
+    as a pull request (Fedora/Mac). Pictures are refused: the repo is public (logos stay per PC)."""
+    if WINDOWS or not os.path.isdir(os.path.join(ROOT, ".git")):
+        raise ValueError("sharing needs a Fedora or Mac PC with LabelDesk from GitHub — use Export and send the file instead")
+    if not isinstance(t, dict) or not isinstance(t.get("objects"), list) or not str(t.get("name") or "").strip():
+        raise ValueError("send a template with a name")
+    if any(o.get("kind") == "image" for o in t["objects"]):
+        raise ValueError("templates with pictures can't be shared — the repo is public (logos stay on each PC). Remove the picture first")
+    slug = re.sub(r"[^a-z0-9]+", "-", t["name"].strip().lower()).strip("-")[:60] or "template"
+    keep = {k: t[k] for k in ("name", "stock", "orientation", "rect", "objects", "flip") if k in t}
+    os.makedirs(TEMPLATES_DIR, exist_ok=True)
+    path = os.path.join(TEMPLATES_DIR, slug + ".json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(keep, f, indent=1, ensure_ascii=False)
+        f.write("\n")
+    return os.path.relpath(path, ROOT)
 
 
 def labels(cfg=None):
@@ -496,16 +658,106 @@ def run_update_now():
         raise ValueError("this copy isn't a git checkout — reinstall from GitHub (SETUP.md section 1)")
     if st["dirty"] or st["ahead"]:
         raise ValueError(f"this PC has changes that aren't on GitHub yet — run tools/update.sh in {ROOT} so they're merged")
+    run_detached("tools/update.sh")
+
+
+def run_detached(tool):
+    """Run `tool` (relative to the checkout) outside LabelDesk, logging to update.log, so the restart at its end doesn't
+    cut it off: Mac in its own session (launchd), Fedora in its own systemd unit (the service's cgroup gets killed)."""
     os.makedirs(DATA, exist_ok=True)
-    cmd = f"cd {shlex_quote(ROOT)} && tools/update.sh > {shlex_quote(update_log())} 2>&1"
-    if MAC:                                                      # own session: survives launchd restarting LabelDesk
+    cmd = f"cd {shlex_quote(ROOT)} && {tool} > {shlex_quote(update_log())} 2>&1"
+    if MAC:
         subprocess.Popen(["/bin/bash", "-c", cmd], start_new_session=True, stdin=subprocess.DEVNULL,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return
     if not shutil.which("systemd-run"):
-        raise ValueError("systemd-run isn't available — run tools/update.sh in a Terminal")
+        raise ValueError(f"systemd-run isn't available — run {tool} in a Terminal in {ROOT}")
     subprocess.run(["systemd-run", "--user", "--collect", "--quiet", f"--unit=labeldesk-update-{int(time.time())}",
                     "/bin/bash", "-c", cmd], check=True, capture_output=True, timeout=15)
+
+
+# ---- Settings → Version: any published version on this PC (held there), or — owner only — for every PC
+_versions = {"at": 0, "list": None}
+
+
+def published_versions(now=None):
+    """GitHub's releases, newest first: [{version, date, notes, msi}] (cached 10 min). Raises when GitHub can't be reached."""
+    now = time.time() if now is None else now
+    if _versions["list"] is not None and now - _versions["at"] < 600:
+        return _versions["list"]
+    rels = json.loads(download(RELEASES_API, 5_000_000, "application/vnd.github+json"))
+    out = []
+    for r in rels:
+        v = str(r.get("tag_name") or "").lstrip("v")
+        if not version_tuple(v) or r.get("draft"):
+            continue
+        notes = [ln.strip()[2:] for ln in (r.get("body") or "").splitlines() if ln.strip().startswith("- ")]
+        names = {a.get("name") for a in r.get("assets", [])}
+        out.append({"version": v, "date": (r.get("published_at") or "")[:10], "notes": notes[:6],
+                    "msi": f"LabelDesk-{v}.msi" in names and f"LabelDesk-{v}.msi.sha256" in names})
+    out.sort(key=lambda x: version_tuple(x["version"]), reverse=True)
+    _versions.update(at=now, list=out)
+    return out
+
+
+_publisher = {}
+
+
+def is_publisher():
+    """The repo's owner (GitHub admin, or git config labeldesk.publisher true) — the only one who publishes versions."""
+    if "v" not in _publisher:
+        ok = False
+        try:
+            r = subprocess.run(["git", "-C", ROOT, "config", "--get", "labeldesk.publisher"], capture_output=True, text=True, timeout=5)
+            ok = r.stdout.strip() == "true"
+            if not ok and shutil.which("gh"):
+                r = subprocess.run(["gh", "api", f"repos/{REPO}", "--jq", ".permissions.admin"], capture_output=True, text=True, timeout=15)
+                ok = r.stdout.strip() == "true"
+        except (OSError, subprocess.SubprocessError):
+            pass
+        _publisher["v"] = ok
+    return _publisher["v"]
+
+
+def versions_info():
+    cfg = config()
+    info = {"current": VERSION, "held": cfg.get("hold_version") or None, "platform": "windows" if WINDOWS else "mac" if MAC else "linux",
+            "how": "windows" if WINDOWS else ("git" if os.path.isdir(os.path.join(ROOT, ".git")) else "folder"),
+            "publisher": (not WINDOWS) and is_publisher(), "versions": [], "error": None}
+    try:
+        vs = published_versions()
+    except Exception as e:                                        # noqa: BLE001 — offline: say so
+        info["error"] = f"couldn't reach GitHub ({e})"
+        return info
+    floor = (0, 8, 0) if MAC else (0, 0, 0)
+    for v in vs:
+        v = dict(v, installable=(v["msi"] if WINDOWS else version_tuple(v["version"]) >= floor), current=v["version"] == VERSION)
+        info["versions"].append(v)
+    info["newest"] = vs[0]["version"] if vs else None
+    return info
+
+
+def use_version(version, everyone=False):
+    """Settings → Version → Use this version (this PC, held there) / newest (follow updates again) / for every PC."""
+    version = str(version or "").strip().lstrip("v")
+    if version != "newest" and not version_tuple(version):
+        raise ValueError("pick a version")
+    if WINDOWS:
+        if everyone:
+            raise ValueError("publishing a version for every PC is done from the owner's Fedora/Mac PC")
+        target = published_versions()[0]["version"] if version == "newest" else version
+        save_config(hold_version=None if version == "newest" else target)
+        if target == VERSION:
+            return
+        return install_windows_version(target)
+    st = git_state()
+    if st is None:
+        raise ValueError("this copy isn't a git checkout — reinstall it from GitHub (SETUP.md section 1)")
+    if st["dirty"] or st["ahead"]:
+        raise ValueError(f"this PC has changes that aren't on GitHub yet — run tools/update.sh in {ROOT} first")
+    if everyone and not is_publisher():
+        raise ValueError("only the owner publishes versions — ask with a \"Please roll back\" issue on GitHub")
+    run_detached(f"tools/switch-version.sh {version}" + (" --everyone" if everyone else ""))
 
 
 def shlex_quote(s):
@@ -523,12 +775,20 @@ def download(url, limit, accept="application/octet-stream"):
 
 
 def install_windows_update(version):
-    """Windows "Install update": the MSI for `version` from the GitHub release, checked against the release's
-    .sha256, installed per user (no admin) by a helper that waits for this server to exit, then starts it again."""
+    """Windows "Install update": a NEWER version (install_windows_version does the work)."""
     if not WINDOWS:
         raise ValueError("on Fedora use Update now / tools/update.sh")
     if not version_tuple(version) or version_tuple(version) <= version_tuple(VERSION):
         raise ValueError("no newer version to install")
+    install_windows_version(version)
+
+
+def install_windows_version(version):
+    """The MSI for `version` from the GitHub release, checked against the release's .sha256, installed per user (no
+    admin) by a helper that waits for this server to exit, then starts it again. An OLDER version: the installed one is
+    uninstalled first (an older MSI doesn't replace a newer one; settings and history in %APPDATA% stay)."""
+    if not WINDOWS:
+        raise ValueError("Windows only")
     rel = json.loads(download(RELEASE_API.format(version=version), 1_000_000, "application/vnd.github+json"))
     assets = {a["name"]: a["browser_download_url"] for a in rel.get("assets", [])}
     msi_name = f"LabelDesk-{version}.msi"
@@ -547,14 +807,26 @@ def install_windows_update(version):
     pythonw = os.path.join(ROOT, "python", "pythonw.exe")
     server = os.path.join(ROOT, "labeldesk-server.pyw")
     log = os.path.join(work, "install.log")
-    ps = (f"Wait-Process -Id {os.getpid()} -Timeout 60 -ErrorAction SilentlyContinue; "
+    older = version_tuple(version) < version_tuple(VERSION)
+    # Windows Installer's own list of LabelDesk installs (by the fixed UpgradeCode in windows/labeldesk.wxs) — per-user
+    # MSIs aren't in the Uninstall registry key (found on the test VM)
+    remove = ("$wi = New-Object -ComObject WindowsInstaller.Installer; "
+              f"foreach ($c in @($wi.RelatedProducts('{UPGRADE_CODE}'))) "
+              "{ Start-Process msiexec.exe -ArgumentList '/x',$c,'/qb' -Wait }; ") if older else ""
+    ps = (f"Wait-Process -Id {os.getpid()} -Timeout 60 -ErrorAction SilentlyContinue; {remove}"
           f"$p = Start-Process msiexec.exe -ArgumentList '/i','\"{msi_path}\"','/qb','/l*v','\"{log}\"' -Wait -PassThru; "
           f"Start-Process '{pythonw}' -ArgumentList '\"{server}\"'; exit $p.ExitCode")
     script = os.path.join(work, "install-update.ps1")
     with open(script, "w", encoding="utf-8") as f:
         f.write(ps + "\n")
-    subprocess.Popen(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", script],
-                     creationflags=0x00000008 | 0x00000200, close_fds=True)   # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    args = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", script]
+    # CREATE_NO_WINDOW (a hidden console — PowerShell started DETACHED_PROCESS, i.e. with no console, quits at once:
+    # "Install update" never ran that way, found on the test VM 2026-10-10) | CREATE_NEW_PROCESS_GROUP |
+    # CREATE_BREAKAWAY_FROM_JOB (outlive LabelDesk even if it was started inside a job, e.g. by a scheduled task)
+    try:
+        subprocess.Popen(args, creationflags=0x08000000 | 0x00000200 | 0x01000000, close_fds=True)
+    except OSError:                                                      # the job doesn't allow breaking away
+        subprocess.Popen(args, creationflags=0x08000000 | 0x00000200, close_fds=True)
     threading.Timer(1.0, lambda: os._exit(0)).start()                   # let the reply go out, then free the files
 
 
@@ -592,8 +864,180 @@ def windows_add_dymo(model, ip):
         raise RuntimeError("Windows didn't allow it (the admin prompt was declined?)")
 
 
+# ------------------------------------------------------------------ printers found on the network (autoprint.py)
+class QueueOps:
+    """What autoprint needs from this PC: CUPS queues via lpstat/lpadmin (Fedora/Mac); Windows only reads."""
+    _models = None
+
+    def queue(self, kind):
+        return queue_for(kind)
+
+    def uri(self, q):
+        if WINDOWS:
+            return "windows:" + q if q else None
+        r = subprocess.run(["lpstat", "-v", q], capture_output=True, text=True, timeout=10)
+        m = re.search(r":\s*(\S+)\s*$", r.stdout.strip()) if r.returncode == 0 else None
+        return m.group(1) if m else None
+
+    def ppd(self, model):
+        """The driver's model name for lpadmin -m (Fedora 'lw5xl.ppd', Mac 'Library/Printers/PPDs/…/lw5xl.ppd.gz')."""
+        if self._models is None:
+            r = subprocess.run(["lpinfo", "-m"], capture_output=True, text=True, timeout=30)
+            QueueOps._models = [ln.split(" ", 1)[0] for ln in r.stdout.splitlines()]
+        want = {"550T": "lw550t.ppd", "550": "lw550.ppd", "5XL": "lw5xl.ppd"}[model]
+        for m in self._models:
+            if m.rsplit("/", 1)[-1] in (want, want + ".gz"):
+                return m
+        raise RuntimeError("DYMO's driver isn't installed (" + ("DYMO Connect for Mac" if MAC else "tools/install-driver.sh") + ")")
+
+    def add(self, kind, q, uri, model):
+        lab = labels()[kind]
+        desc = f"DYMO {autoprint.MODEL_NAME[model]} ({'inventory tags' if kind == 'tag' else 'shipping'})"
+        self._lpadmin(["-p", q, "-E", "-v", uri, "-m", self.ppd(model), "-D", desc,
+                       "-o", f"PageSize={lab['page']}", "-o", "printer-error-policy=abort-job"])
+
+    def repoint(self, q, uri):
+        self._lpadmin(["-p", q, "-v", uri])
+
+    def _lpadmin(self, args):
+        r = subprocess.run(["lpadmin", *args], capture_output=True, text=True, timeout=30)
+        msg = "\n".join(ln for ln in (r.stderr + r.stdout).splitlines() if "deprecated" not in ln).strip()
+        if r.returncode != 0:
+            if "Forbidden" in msg or "not authorized" in msg.lower() or "password" in msg.lower():
+                msg = "this user may not change printers — run tools/add-printers.sh in a Terminal"
+            raise RuntimeError(msg or "lpadmin failed")
+
+    def answers(self, ip, port):
+        try:
+            socket.create_connection((ip, port or dymo.PORT), timeout=1.5).close()
+            return True
+        except OSError:
+            return False
+
+    def busy(self, kind):
+        if any(time.time() - t < 8 for t in RECENT.values()):          # LabelDesk just sent something
+            return True
+        if WINDOWS:
+            return False
+        try:
+            return ipp.printer(queue_for(kind))["state"] == "printing"
+        except (LookupError, OSError):
+            return False
+
+
+def _browse():
+    """LabelDesk's own Bonjour scan (gives IPs → rolls) on Fedora; the Mac asks CUPS (macOS blocks the LaunchAgent's own
+    scan); Windows asks the system's DNS-SD (winmdns.py) — its firewall would drop replies to LabelDesk's own scan."""
+    if MAC:
+        return dymo.browse_cups()
+    if WINDOWS:                                    # the system's DNS-SD (its own firewall rules; no prompt for LabelDesk)
+        import winmdns
+        return winmdns.browse()
+    found = dymo.browse()
+    if not found and dymo.LAST.get("error") and not WINDOWS:
+        return dymo.browse_cups()
+    return found
+
+
+AUTO = autoprint.Auto(QueueOps(), browse=_browse, can_manage=not WINDOWS)
+
+
+def heal_once():
+    """A queue that got paused (a printer that was off, a cable out) is resumed once its printer answers again — no more
+    "press Resume". Fedora/Mac; Windows needs an admin for it, so there the bar still offers Resume. Off with
+    "auto_resume": false."""
+    if WINDOWS or not config().get("auto_resume", True):
+        return
+    for kind in ("tag", "ship"):
+        q = queue_for(kind)
+        try:
+            p = ipp.printer(q)
+        except (LookupError, OSError):
+            continue
+        if not (p["state"] == "stopped" or not p["accepting"]):
+            continue
+        ip, port = AUTO.host_for(kind)
+        if ip and not AUTO.ops.answers(ip, port):
+            continue                                                   # still off: leave it paused
+        try:
+            resume(kind)
+            AUTO.event(f"The {'550 Turbo' if kind == 'tag' else '5XL'} was paused — it's answering again, so LabelDesk resumed it.")
+        except RuntimeError as e:
+            print("auto-resume:", e, flush=True)
+
+
+def heal_loop(every=60):
+    while True:
+        time.sleep(every)
+        try:
+            heal_once()
+        except Exception as e:                                         # noqa: BLE001 — never let it die
+            print("auto-resume:", repr(e), flush=True)
+
+
+def expected_stock(kind, cfg=None):
+    return labels(cfg)[kind]["stock"].split()[0]
+
+
+def roll_check(kind, want=None):
+    """None, or why this label shouldn't print right now (wrong roll / no labels) — the page offers Print anyway."""
+    if not config().get("auto_printers", True):
+        return None
+    try:
+        r = AUTO.roll(kind)
+    except Exception:                                              # noqa: BLE001 — the roll is a nicety, never block on it
+        return None
+    if not r:
+        return None
+    printer = "550 Turbo" if kind == "tag" else "5XL"
+    if not r["canPrint"]:
+        return f"the {printer} says {r['media']}"
+    want = want or expected_stock(kind)
+    if r["stock"] and r["stock"] != want:
+        return (f"the {printer} has {r['name']} labels loaded, but LabelDesk is set to print {dymo.describe_roll(want) or want}"
+                + (" — change it in Settings → Tag labels" if kind == "tag" else ""))
+    return None
+
+
 def printers():
-    """Each configured queue: ok? plus the state in plain English (ipp.py / winprint)."""
+    """Each configured queue: ok? plus the state in plain English (ipp.py / winprint), the roll in it, and what was
+    found on the network."""
+    out, auto = _printers(), bool(config().get("auto_printers", True))
+    for kind in ("tag", "ship"):
+        try:
+            out[kind]["roll"] = AUTO.roll(kind) if auto else None
+        except Exception:                                          # noqa: BLE001
+            out[kind]["roll"] = None
+        out[kind]["expect"] = expected_stock(kind)
+    out["network"] = {"found": AUTO.found, "offers": AUTO.offers, "scannedAt": AUTO.at, "scanning": AUTO.scanning,
+                      "auto": auto, "canManage": AUTO.can_manage,
+                      "error": dymo.LAST.get("error")}
+    return out
+
+
+def use_printer(kind, k):
+    """Settings → Printers on the network → Use for tags / shipping: point this kind's queue at that printer (k = its
+    key: IP or CUPS URI, autoprint.key)."""
+    if kind not in ("tag", "ship"):
+        raise ValueError("kind must be tag or ship")
+    p = next((p for p in AUTO.found if autoprint.key(p) == k), None)
+    if not p:
+        raise ValueError("that printer isn't on the network any more — Look again")
+    if WINDOWS:
+        if not p.get("ip"):
+            raise ValueError("no address for that printer — add it in DYMO Connect")
+        return windows_add_dymo("5XL" if p["model"] == "5XL" else "550", p["ip"])
+    ops, q = AUTO.ops, queue_for(kind)
+    if ops.uri(q) is None:
+        ops.add(kind, q, autoprint.device_uri(p), p["model"])
+    else:
+        ops.repoint(q, autoprint.device_uri(p))
+    AUTO.forget_roll(kind)
+    AUTO.event(f"{'Tags' if kind == 'tag' else 'Shipping labels'} now print on the {autoprint.MODEL_NAME[p['model']]}{autoprint.where(p)}.")
+    AUTO.offers = [o for o in AUTO.offers if autoprint.key(o) != k]
+
+
+def _printers():
     out = {}
     if WINDOWS:
         for kind in ("tag", "ship"):
@@ -752,11 +1196,21 @@ class Handler(BaseHTTPRequestHandler):
                 cfg = config()
                 return self.send_json({"version": VERSION, "labels": labels(cfg), "tagStocks": TAG_STOCKS,
                                        "tagLabel": labels(cfg)["tag"]["stock"].split()[0], "flipTag": cfg["flip_tag"], "tagOffsetMm": float(cfg.get("tag_offset_mm") or 0),
-                                       "barcodeCheck": barcode.available(), "platform": "windows" if WINDOWS else "mac" if MAC else "linux"})
+                                       "barcodeCheck": barcode.available(), "started": STARTED,
+                                       "autoShip": bool(cfg.get("auto_ship")),
+                                       "tagBarcode": cfg.get("tag_barcode") if cfg.get("tag_barcode") in ("code128", "code39") else "code128", "platform": "windows" if WINDOWS else "mac" if MAC else "linux"})
             if path == "/api/printers":
                 return self.send_json(printers())
+            if path == "/api/printers/events":               # ?after=<id>: what LabelDesk did by itself
+                return self.send_json({"events": AUTO.since(int((q.get("after") or ["0"])[0]))})
             if path == "/api/update":
                 return self.send_json(check_update())
+            if path == "/api/stocks":                        # the designer's label list
+                return self.send_json({"stocks": list(STOCKS.values())})
+            if path == "/api/templates/shared":              # the shop's templates (templates/*.json in the repo)
+                return self.send_json({"templates": shared_templates()})
+            if path == "/api/versions":                      # Settings → Version
+                return self.send_json(versions_info())
             if path == "/api/update/log":
                 try:
                     with open(update_log(), encoding="utf-8", errors="replace") as f:
@@ -770,8 +1224,23 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError:
                     return self.send_json({"error": "no logo on this PC"}, 404)
                 return self.send_bytes(raw, "image/jpeg" if raw[:2] == b"\xff\xd8" else "image/png")
+            if path == "/api/history.csv":
+                f = {k: (q.get(k) or [""])[0] for k in ("q", "kind", "since", "until")}
+                body = history_csv(**f).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/csv; charset=utf-8")
+                self.send_header("Content-Disposition", f'attachment; filename="labeldesk-history-{datetime.now():%Y-%m-%d}.csv"')
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if path == "/api/device":                        # ?serial= — been here before?
+                return self.send_json(device_info((q.get("serial") or [""])[0]))
+            if m := re.fullmatch(r"/api/ticket/(\d{1,10})", path):  # History → Scan a tag
+                return self.send_json(ticket_info(m.group(1)))
             if path == "/api/history":
-                items = history()
+                f = {k: (q.get(k) or [""])[0] for k in ("q", "kind", "since", "until")}
+                items = history(limit=min(500, int((q.get("limit") or ["60"])[0])), before=int((q.get("before") or ["0"])[0]), **f)
                 for r in [r for r in items if r["state"] == "sent" and r["job"]][:10]:   # nobody watched it finish
                     try:
                         r.update(state=job_status(r["id"])["state"])
@@ -856,8 +1325,11 @@ class Handler(BaseHTTPRequestHandler):
                     if len(raw) != int(g["w"]) * int(g["h"]):
                         raise ValueError("grey image size mismatch")
                     gray = (int(g["w"]), int(g["h"]), raw)
+                stock = b.get("stock") or None
+                if stock is not None and stock not in STOCKS:
+                    raise ValueError("unknown label")
                 res, code = print_label(kind, png, copies, fields, force=bool(b.get("force")), gray=gray,
-                                        client_check=b.get("check") if isinstance(b.get("check"), dict) else None)
+                                        client_check=b.get("check") if isinstance(b.get("check"), dict) else None, stock=stock)
                 return self.send_json(res, code)
             if m := re.fullmatch(r"/api/job/(\d+)/cancel", path):
                 cancel_job(int(m.group(1)))
@@ -878,6 +1350,22 @@ class Handler(BaseHTTPRequestHandler):
                 _cw_check.clear()
                 keys.clear()
                 return self.send_json(cw_status())
+            if m := re.fullmatch(r"/api/ticket/(\d{1,10})/collected", path):   # {collected: bool} — this PC's record only
+                set_collected(m.group(1), bool(b.get("collected", True)))
+                return self.send_json(ticket_info(m.group(1)))
+            if path == "/api/templates/share":               # {template} → templates/<name>.json in this checkout
+                return self.send_json({"ok": True, "path": share_template(b.get("template"))})
+            if path == "/api/sheet":                         # Batch → Open spreadsheet: {name, data: base64} → columns + rows
+                return self.send_json(sheet.read(str(b.get("name") or ""), base64.b64decode(b.get("data") or "", validate=True)))
+            if path == "/api/settings/auto-ship":            # Settings → Shipping labels print by themselves: {on}
+                save_config(auto_ship=bool(b.get("on")))
+                return self.send_json({"ok": True})
+            if path == "/api/settings/tag-barcode":          # Settings → Tag barcode: {symbology: code128 | code39}
+                sym = str(b.get("symbology") or "")
+                if sym not in ("code128", "code39"):
+                    raise ValueError("tag barcode must be code128 or code39")
+                save_config(tag_barcode=sym)
+                return self.send_json({"ok": True})
             if path == "/api/settings/tag-label":            # Settings → Tag labels: {label: "30252" | "30321"}
                 stock = str(b.get("label") or "")
                 if stock not in TAG_STOCKS:
@@ -892,6 +1380,16 @@ class Handler(BaseHTTPRequestHandler):
                     os.remove(logo_path())
                 except FileNotFoundError:
                     pass
+                return self.send_json({"ok": True})
+            if path == "/api/version/use":                   # {version: "0.8.1" | "newest", everyone: bool}
+                use_version(b.get("version"), bool(b.get("everyone")))
+                _update.update(at=0, result=None)
+                return self.send_json({"ok": True})
+            if path == "/api/printers/scan":                 # Settings → Look again
+                AUTO.scan()
+                return self.send_json({"ok": True})
+            if path == "/api/printers/use":                  # {kind, ip}: use this printer found on the network
+                use_printer(str(b.get("kind") or ""), str(b.get("key") or b.get("ip") or ""))
                 return self.send_json({"ok": True})
             if path == "/api/update/run":                    # Fedora: Update now (no local changes only)
                 run_update_now()
@@ -933,6 +1431,9 @@ def main():
     dirs = ([] if MAC else [(SPOOL, True)]) + ([(dl, False)] if cfg["watch_downloads"] else [])   # Mac: no print-dialog printer
     INBOX = Inbox(dirs)
     threading.Thread(target=INBOX.run, daemon=True).start()
+    if cfg.get("auto_printers", True):
+        threading.Thread(target=AUTO.run, daemon=True).start()
+    threading.Thread(target=heal_loop, daemon=True).start()
     try:
         migrate_logo()
     except OSError as e:

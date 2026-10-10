@@ -9,6 +9,10 @@
              Description="LabelDesk — DYMO label printing" Comments="Inventory tags and shipping labels on DYMO LabelWriters"/>
     <Property Id="ALLUSERS" Value="2"/>
     <Property Id="MSIINSTALLPERUSER" Value="1"/>
+    <!-- Always copy every file. Without it an upgrade skips files whose version didn't change (python.exe…) as "already
+         there", then removing the old version deletes them: LabelDesk installed without Python (seen 0.5.0/0.8.1 → 0.9.0
+         on the test VM, 2026-10-10). -->
+    <Property Id="REINSTALLMODE" Value="amus"/>
     <Media Id="1" Cabinet="labeldesk.cab" EmbedCab="yes"/>
     <Icon Id="LabelDeskIcon" SourceFile="$(var.Src)/icon.ico"/>
     <Property Id="ARPPRODUCTICON" Value="LabelDeskIcon"/>
@@ -18,7 +22,7 @@
       <UpgradeVersion Minimum="@VERSION@" IncludeMinimum="no" OnlyDetect="yes" Property="NEWER_FOUND"/>
     </Upgrade>
     <InstallExecuteSequence>
-      <RemoveExistingProducts After="InstallInitialize"/>
+      <RemoveExistingProducts After="InstallValidate"/>
     </InstallExecuteSequence>
 
     <Directory Id="TARGETDIR" Name="SourceDir">

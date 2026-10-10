@@ -8,7 +8,7 @@ Everything a technician needs, in order. The short version is in README.md.
 3. [Printers that can't be found (Wi-Fi, Windows)](#3-printers-that-cant-be-found-wi-fi-windows)
 4. [Claude: Claude Code and the skills](#4-claude-claude-code-and-the-skills)
 5. [Before your first change: GitHub access](#5-before-your-first-change-github-access)
-6. [Making and shipping changes](#6-making-and-shipping-changes)
+6. [Suggesting changes (pull requests and feature requests)](#6-suggesting-changes-pull-requests-and-feature-requests)
 7. [Publishing a Windows installer](#7-publishing-a-windows-installer)
 8. [Updates, turning the check off, uninstalling](#8-updates-turning-the-check-off-uninstalling)
 9. [Labels remaining (finding out first)](#9-labels-remaining-finding-out-first)
@@ -64,7 +64,10 @@ installs, and runs from a clone of this repo like on Fedora (same `tools/update.
 
 1. Install **DYMO Connect for Mac** from DYMO's download page
    (https://www.dymo.com/support?cfid=online-support-sw-downloads). Adding the printers in it is optional.
-2. In **Terminal**:
+2. **Easiest:** download `LabelDesk-<version>.pkg` from the repo's Releases page and open it (first time: right-click →
+   Open — it isn't signed by Apple). It clones LabelDesk into `~/LabelDesk_Public`, installs the app and the printers set
+   themselves up; if it asks for Apple's developer tools, install them and open the package again. Log:
+   `/tmp/labeldesk-install.log`. **Or** in **Terminal**:
    ```bash
    xcode-select --install          # git + python3 from Apple; click Install, wait, skip if "already installed"
    git clone https://github.com/cpkrepo/LabelDesk_Public.git ~/LabelDesk_Public
@@ -157,36 +160,48 @@ When a skill changes in the repo, Claude Code picks it up on the next start; Cla
    ```
    Choose GitHub.com, HTTPS, and log in with the browser.
 
-## 6. Making and shipping changes
+## 6. Suggesting changes (pull requests and feature requests)
 
-Ask Claude Code (started in the clone) for the change. It tests it, commits it and runs `tools/update.sh`, which:
+**Only the owner publishes new versions.** Nobody else's change reaches `main` or the other PCs until the owner has
+reviewed and approved it — GitHub enforces this (owner-approved pull requests only; only the owner creates versions).
+
+**Just an idea?** Repo → **Issues → New issue → Feature request** (or "Something's wrong", "Please roll back"), or ask
+Claude Code to file it. No code needed. Never paste customer names, addresses or real labels: the repo is public.
+
+**Want to make the change yourself?** Ask Claude Code (started in the clone) for it. It tests it, notes it in
+`CHANGELOG.md`, commits it and runs `tools/update.sh`, which:
 1. commits anything changed on this PC (source files only; it lists other new files instead of committing them),
 2. puts your commits on top of the newest version on GitHub,
-3. raises the version (0.6.0 → 0.6.1; a bigger feature can set 0.7.0 in `VERSION` itself),
-4. runs the unit tests, then pushes to GitHub with a tag `v<version>`,
-5. restarts LabelDesk on the new code.
+3. runs the unit tests,
+4. pushes them to your own branch (`change/<this-pc>-<date>`) and opens a **pull request** for the owner,
+5. restarts LabelDesk here on your change. The other PCs get it only when the owner merges and publishes it.
 
-You can run `tools/update.sh` yourself too; `tools/update.sh --check` only reports what's local and what's new.
+Running it again with more changes updates the same pull request. Once the owner has published it, `tools/update.sh`
+(or **Update now**) brings this PC back in line with everyone else. If the owner declines it, ask Claude Code to
+"put this PC back on GitHub's version" (`git fetch && git reset --hard origin/main`).
 
-**If update.sh stops,** nothing was pushed and your work is safe in local commits:
+**If update.sh stops,** nothing was sent and your work is safe in local commits:
 
 | Message | What to do |
 |---|---|
-| "touch the same lines" (conflict) | Ask Claude Code: "merge my unpushed LabelDesk changes with GitHub's main, then run tools/update.sh". |
+| "touch the same lines" (conflict) | Ask Claude Code: "merge my unsent LabelDesk changes with GitHub's main, then run tools/update.sh". |
 | "tests failed" | Ask Claude Code to fix the failing test (log: `/tmp/labeldesk-update-tests.log`). Don't skip tests. |
-| "GitHub refused the push" | Not invited / not signed in (section 5), or someone pushed a second ago: run it again. |
+| "GitHub refused the push" | Not invited / not signed in (section 5). |
 | "git doesn't know who you are" | Section 5, step 2. |
 | "isn't a git checkout" | This copy came from a zip: reinstall from the clone (section 1). |
 
-**A new version is bad? Roll it back.** Ask Claude Code "roll LabelDesk back" (skill `labeldesk-rollback`), or:
-```bash
-tools/rollback.sh                          # list recent versions
-tools/rollback.sh 0.7.0 "0.7.1 cuts off the logo"
-```
-GitHub's newest version then becomes the code of 0.7.0 under the next number (e.g. 0.7.2), so every PC goes back with
-its normal update — Windows included (the Action builds its installer). The bad version isn't erased; the rollback can
-be undone the same way. GitHub refuses force-pushes and deleting `main` or version tags, so no one can lose the history
-by accident.
+**For the owner:** review pull requests on GitHub (Files changed → Review → Approve → **Merge**; squash merging is off so
+technicians' PCs recognise their own merged work). Then run `tools/update.sh` on your PC: it publishes everything merged
+since the last version (version number, changelog, tests, tag → Windows installer). Your own changes publish directly.
+
+**A new version is bad?** LabelDesk → **Settings → Version**: the list of every published version (from GitHub) with
+what changed. Pick one → **Use this version** → OK. LabelDesk switches by itself (Windows: uninstalls this version and
+installs the chosen one; Fedora/Mac: checks it out) and restarts; this PC then stays on it — no update notices — until
+**Back to the newest version**. Your settings, logo and history are kept.
+
+On the owner's PC the same screen has **For every PC**: it publishes the chosen version's code as the next version
+number (`tools/rollback.sh`), so every PC goes back with its normal update — Windows included. The bad version isn't
+erased; it can be brought back the same way. Technicians who think everyone should go back: **Please roll back** issue.
 
 ## 7. Publishing a Windows installer
 
