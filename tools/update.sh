@@ -20,7 +20,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 REMOTE=${LABELDESK_REMOTE:-origin}
 BRANCH=${LABELDESK_BRANCH:-main}
-SRC='\.(py|js|mjs|css|html|md|sh|ps1|pyw|te|wxs|svg|txt)$'
+SRC='(\.(py|js|mjs|css|html|md|sh|ps1|pyw|te|wxs|svg|txt)|^templates/[^/]+\.json)$'   # + the shop's designer templates
 
 die() { echo "✗ $1" >&2; exit "${2:-1}"; }
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "this folder isn't a git checkout — install from GitHub (README → Install) to get updates"
