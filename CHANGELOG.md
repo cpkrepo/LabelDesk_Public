@@ -4,9 +4,21 @@ Newest first. Every version is on the [Releases page](https://github.com/cpkrepo
 installer attached) and any of them can be brought back with `tools/rollback.sh <version>`.
 
 **Changing LabelDesk?** Add a line under `## Unreleased` describing what changed for the people using it;
-`tools/update.sh` turns that heading into the version number when it publishes.
+the owner's `tools/update.sh` turns that heading into the version number when it publishes.
 
 ## Unreleased
+- **Printers set themselves up.** When LabelDesk starts and every few minutes it looks for the DYMO printers on the
+  network: a printer it finds for the first time is set up, and a printer that got a new address is followed — no more
+  `add-printers.sh` after a router restart. Other DYMO printers it finds are listed in Settings → Printers on the network
+  with a "Use for…" button (Windows: always a button, it needs an admin prompt).
+- **LabelDesk knows which roll is loaded** (550 Turbo and 5XL read the roll's chip): tags switch to 30252 or 30321 by
+  themselves, the top bar shows the roll and how many labels are left, and printing on the wrong roll, an empty roll or
+  with the cover open asks first instead of wasting labels.
+- **Settings → Version:** every published version, with what changed in each. **Use this version** puts this PC on
+  it — automatically, on Windows, Mac and Fedora — and keeps it there until **Back to the newest version**. On the
+  owner's PC a "for every PC" box publishes it as the next version instead, so every PC goes back.
+- **Changes are approved by the owner.** Technicians' changes go to the owner as pull requests (`tools/update.sh` opens
+  them); ideas, problems and rollback requests go in GitHub Issues. Only the owner publishes versions.
 
 ## 0.8.1 — 2026-10-10
 - **Version history:** this file, linked from the README; every release on GitHub shows its version's notes.

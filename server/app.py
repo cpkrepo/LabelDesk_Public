@@ -24,6 +24,7 @@ import os
 import ipaddress
 import re
 import shutil
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -35,8 +36,10 @@ import urllib.request
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import autoprint
 import barcode
 import connectwise
+import dymo
 import keys
 from inbox import SPOOL, Inbox, downloads_dir
 
@@ -61,11 +64,13 @@ def _read_version():
 
 
 VERSION = _read_version()
+STARTED = time.time()                                            # the page sees a restart by this changing
 # after each print the app asks GitHub for the newest VERSION (a plain GET of one small file; no label content, no IDs)
 REPO = "cpkrepo/LabelDesk_Public"
 UPDATE_URL = f"https://raw.githubusercontent.com/{REPO}/main/VERSION"
 RELEASES_URL = f"https://github.com/{REPO}/releases"
 RELEASE_API = f"https://api.github.com/repos/{REPO}/releases/tags/v{{version}}"
+RELEASES_API = f"https://api.github.com/repos/{REPO}/releases?per_page=40"
 WEB = os.path.realpath(os.environ.get("LABELDESK_WEB") or os.path.join(HERE, "..", "web"))
 if WINDOWS:
     CONF_FILE = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "LabelDesk", "config.json")
@@ -99,7 +104,7 @@ LABELS = {
 def config():
     c = {"tag_queue": "Dymo-550-Turbo", "ship_queue": "Dymo-5XL", "bind": "127.0.0.1", "port": 8792, "flip_tag": False, "tag_offset_mm": 0,
          "watch_downloads": True, "update_check": True, "update_url": UPDATE_URL, "tag_logo": "",
-         "tag_label": DEFAULT_TAG_STOCK}
+         "tag_label": DEFAULT_TAG_STOCK, "auto_printers": True}
     try:
         with open(CONF_FILE) as f:
             c.update(json.load(f))
@@ -110,6 +115,8 @@ def config():
     c["port"] = int(os.environ.get("LABELDESK_PORT", c["port"]))
     if os.environ.get("LABELDESK_WATCH") == "0":
         c["watch_downloads"] = False
+    if os.environ.get("LABELDESK_AUTO_PRINTERS") == "0":
+        c["auto_printers"] = False
     return c
 
 
@@ -298,6 +305,10 @@ def print_label(kind, png, copies, fields, force=False, gray=None, client_check=
         check = barcode.check(png) if barcode.available() else (client_check or {"ok": True, "tracking": None})
         if not check.get("ok") and not force:
             return {"needsForce": True, "check": check, "error": check.get("message", "no barcode could be read")}, 422
+    if not force:
+        why = roll_check(kind)
+        if why:
+            return {"needsForce": True, "roll": True, "error": why}, 422
     with LOCK:
         c = db()
         with c:
@@ -401,7 +412,8 @@ def check_update(cfg=None, now=None):
         res["canUpdateNow"] = bool(res["local"]) and not res["local"]["dirty"] and not res["local"]["ahead"] \
             and (MAC or bool(shutil.which("systemd-run")))
     res["canInstall"] = res["how"] == "windows"
-    if not res["enabled"]:
+    res["held"] = cfg.get("hold_version") or None                 # Settings → Version: this PC stays on a chosen one
+    if not res["enabled"] or res["held"]:
         return res
     now = time.time() if now is None else now
     if _update["result"] and now - _update["at"] < UPDATE_CACHE_S:
@@ -496,16 +508,106 @@ def run_update_now():
         raise ValueError("this copy isn't a git checkout — reinstall from GitHub (SETUP.md section 1)")
     if st["dirty"] or st["ahead"]:
         raise ValueError(f"this PC has changes that aren't on GitHub yet — run tools/update.sh in {ROOT} so they're merged")
+    run_detached("tools/update.sh")
+
+
+def run_detached(tool):
+    """Run `tool` (relative to the checkout) outside LabelDesk, logging to update.log, so the restart at its end doesn't
+    cut it off: Mac in its own session (launchd), Fedora in its own systemd unit (the service's cgroup gets killed)."""
     os.makedirs(DATA, exist_ok=True)
-    cmd = f"cd {shlex_quote(ROOT)} && tools/update.sh > {shlex_quote(update_log())} 2>&1"
-    if MAC:                                                      # own session: survives launchd restarting LabelDesk
+    cmd = f"cd {shlex_quote(ROOT)} && {tool} > {shlex_quote(update_log())} 2>&1"
+    if MAC:
         subprocess.Popen(["/bin/bash", "-c", cmd], start_new_session=True, stdin=subprocess.DEVNULL,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return
     if not shutil.which("systemd-run"):
-        raise ValueError("systemd-run isn't available — run tools/update.sh in a Terminal")
+        raise ValueError(f"systemd-run isn't available — run {tool} in a Terminal in {ROOT}")
     subprocess.run(["systemd-run", "--user", "--collect", "--quiet", f"--unit=labeldesk-update-{int(time.time())}",
                     "/bin/bash", "-c", cmd], check=True, capture_output=True, timeout=15)
+
+
+# ---- Settings → Version: any published version on this PC (held there), or — owner only — for every PC
+_versions = {"at": 0, "list": None}
+
+
+def published_versions(now=None):
+    """GitHub's releases, newest first: [{version, date, notes, msi}] (cached 10 min). Raises when GitHub can't be reached."""
+    now = time.time() if now is None else now
+    if _versions["list"] is not None and now - _versions["at"] < 600:
+        return _versions["list"]
+    rels = json.loads(download(RELEASES_API, 5_000_000, "application/vnd.github+json"))
+    out = []
+    for r in rels:
+        v = str(r.get("tag_name") or "").lstrip("v")
+        if not version_tuple(v) or r.get("draft"):
+            continue
+        notes = [ln.strip()[2:] for ln in (r.get("body") or "").splitlines() if ln.strip().startswith("- ")]
+        names = {a.get("name") for a in r.get("assets", [])}
+        out.append({"version": v, "date": (r.get("published_at") or "")[:10], "notes": notes[:6],
+                    "msi": f"LabelDesk-{v}.msi" in names and f"LabelDesk-{v}.msi.sha256" in names})
+    out.sort(key=lambda x: version_tuple(x["version"]), reverse=True)
+    _versions.update(at=now, list=out)
+    return out
+
+
+_publisher = {}
+
+
+def is_publisher():
+    """The repo's owner (GitHub admin, or git config labeldesk.publisher true) — the only one who publishes versions."""
+    if "v" not in _publisher:
+        ok = False
+        try:
+            r = subprocess.run(["git", "-C", ROOT, "config", "--get", "labeldesk.publisher"], capture_output=True, text=True, timeout=5)
+            ok = r.stdout.strip() == "true"
+            if not ok and shutil.which("gh"):
+                r = subprocess.run(["gh", "api", f"repos/{REPO}", "--jq", ".permissions.admin"], capture_output=True, text=True, timeout=15)
+                ok = r.stdout.strip() == "true"
+        except (OSError, subprocess.SubprocessError):
+            pass
+        _publisher["v"] = ok
+    return _publisher["v"]
+
+
+def versions_info():
+    cfg = config()
+    info = {"current": VERSION, "held": cfg.get("hold_version") or None, "platform": "windows" if WINDOWS else "mac" if MAC else "linux",
+            "how": "windows" if WINDOWS else ("git" if os.path.isdir(os.path.join(ROOT, ".git")) else "folder"),
+            "publisher": (not WINDOWS) and is_publisher(), "versions": [], "error": None}
+    try:
+        vs = published_versions()
+    except Exception as e:                                        # noqa: BLE001 — offline: say so
+        info["error"] = f"couldn't reach GitHub ({e})"
+        return info
+    floor = (0, 8, 0) if MAC else (0, 0, 0)
+    for v in vs:
+        v = dict(v, installable=(v["msi"] if WINDOWS else version_tuple(v["version"]) >= floor), current=v["version"] == VERSION)
+        info["versions"].append(v)
+    info["newest"] = vs[0]["version"] if vs else None
+    return info
+
+
+def use_version(version, everyone=False):
+    """Settings → Version → Use this version (this PC, held there) / newest (follow updates again) / for every PC."""
+    version = str(version or "").strip().lstrip("v")
+    if version != "newest" and not version_tuple(version):
+        raise ValueError("pick a version")
+    if WINDOWS:
+        if everyone:
+            raise ValueError("publishing a version for every PC is done from the owner's Fedora/Mac PC")
+        target = published_versions()[0]["version"] if version == "newest" else version
+        save_config(hold_version=None if version == "newest" else target)
+        if target == VERSION:
+            return
+        return install_windows_version(target)
+    st = git_state()
+    if st is None:
+        raise ValueError("this copy isn't a git checkout — reinstall it from GitHub (SETUP.md section 1)")
+    if st["dirty"] or st["ahead"]:
+        raise ValueError(f"this PC has changes that aren't on GitHub yet — run tools/update.sh in {ROOT} first")
+    if everyone and not is_publisher():
+        raise ValueError("only the owner publishes versions — ask with a \"Please roll back\" issue on GitHub")
+    run_detached(f"tools/switch-version.sh {version}" + (" --everyone" if everyone else ""))
 
 
 def shlex_quote(s):
@@ -523,12 +625,20 @@ def download(url, limit, accept="application/octet-stream"):
 
 
 def install_windows_update(version):
-    """Windows "Install update": the MSI for `version` from the GitHub release, checked against the release's
-    .sha256, installed per user (no admin) by a helper that waits for this server to exit, then starts it again."""
+    """Windows "Install update": a NEWER version (install_windows_version does the work)."""
     if not WINDOWS:
         raise ValueError("on Fedora use Update now / tools/update.sh")
     if not version_tuple(version) or version_tuple(version) <= version_tuple(VERSION):
         raise ValueError("no newer version to install")
+    install_windows_version(version)
+
+
+def install_windows_version(version):
+    """The MSI for `version` from the GitHub release, checked against the release's .sha256, installed per user (no
+    admin) by a helper that waits for this server to exit, then starts it again. An OLDER version: the installed one is
+    uninstalled first (an older MSI doesn't replace a newer one; settings and history in %APPDATA% stay)."""
+    if not WINDOWS:
+        raise ValueError("Windows only")
     rel = json.loads(download(RELEASE_API.format(version=version), 1_000_000, "application/vnd.github+json"))
     assets = {a["name"]: a["browser_download_url"] for a in rel.get("assets", [])}
     msi_name = f"LabelDesk-{version}.msi"
@@ -547,7 +657,12 @@ def install_windows_update(version):
     pythonw = os.path.join(ROOT, "python", "pythonw.exe")
     server = os.path.join(ROOT, "labeldesk-server.pyw")
     log = os.path.join(work, "install.log")
-    ps = (f"Wait-Process -Id {os.getpid()} -Timeout 60 -ErrorAction SilentlyContinue; "
+    older = version_tuple(version) < version_tuple(VERSION)
+    remove = ("Get-ChildItem HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall,"
+              "HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall -ErrorAction SilentlyContinue | Get-ItemProperty | "
+              "Where-Object { $_.DisplayName -eq 'LabelDesk' } | ForEach-Object { Start-Process msiexec.exe "
+              "-ArgumentList '/x',$_.PSChildName,'/qb' -Wait }; ") if older else ""
+    ps = (f"Wait-Process -Id {os.getpid()} -Timeout 60 -ErrorAction SilentlyContinue; {remove}"
           f"$p = Start-Process msiexec.exe -ArgumentList '/i','\"{msi_path}\"','/qb','/l*v','\"{log}\"' -Wait -PassThru; "
           f"Start-Process '{pythonw}' -ArgumentList '\"{server}\"'; exit $p.ExitCode")
     script = os.path.join(work, "install-update.ps1")
@@ -592,8 +707,129 @@ def windows_add_dymo(model, ip):
         raise RuntimeError("Windows didn't allow it (the admin prompt was declined?)")
 
 
+# ------------------------------------------------------------------ printers found on the network (autoprint.py)
+class QueueOps:
+    """What autoprint needs from this PC: CUPS queues via lpstat/lpadmin (Fedora/Mac); Windows only reads."""
+    _models = None
+
+    def queue(self, kind):
+        return queue_for(kind)
+
+    def uri(self, q):
+        if WINDOWS:
+            return "windows:" + q if q else None
+        r = subprocess.run(["lpstat", "-v", q], capture_output=True, text=True, timeout=10)
+        m = re.search(r":\s*(\S+)\s*$", r.stdout.strip()) if r.returncode == 0 else None
+        return m.group(1) if m else None
+
+    def ppd(self, model):
+        """The driver's model name for lpadmin -m (Fedora 'lw5xl.ppd', Mac 'Library/Printers/PPDs/…/lw5xl.ppd.gz')."""
+        if self._models is None:
+            r = subprocess.run(["lpinfo", "-m"], capture_output=True, text=True, timeout=30)
+            QueueOps._models = [ln.split(" ", 1)[0] for ln in r.stdout.splitlines()]
+        want = {"550T": "lw550t.ppd", "550": "lw550.ppd", "5XL": "lw5xl.ppd"}[model]
+        for m in self._models:
+            if m.rsplit("/", 1)[-1] in (want, want + ".gz"):
+                return m
+        raise RuntimeError("DYMO's driver isn't installed (" + ("DYMO Connect for Mac" if MAC else "tools/install-driver.sh") + ")")
+
+    def add(self, kind, q, ip, port, model):
+        lab = labels()[kind]
+        desc = f"DYMO {autoprint.MODEL_NAME[model]} ({'inventory tags' if kind == 'tag' else 'shipping'})"
+        self._lpadmin(["-p", q, "-E", "-v", f"socket://{ip}:{port}", "-m", self.ppd(model), "-D", desc,
+                       "-o", f"PageSize={lab['page']}", "-o", "printer-error-policy=abort-job"])
+
+    def repoint(self, q, ip, port):
+        self._lpadmin(["-p", q, "-v", f"socket://{ip}:{port}"])
+
+    def _lpadmin(self, args):
+        r = subprocess.run(["lpadmin", *args], capture_output=True, text=True, timeout=30)
+        msg = "\n".join(ln for ln in (r.stderr + r.stdout).splitlines() if "deprecated" not in ln).strip()
+        if r.returncode != 0:
+            if "Forbidden" in msg or "not authorized" in msg.lower() or "password" in msg.lower():
+                msg = "this user may not change printers — run tools/add-printers.sh in a Terminal"
+            raise RuntimeError(msg or "lpadmin failed")
+
+    def answers(self, ip, port):
+        try:
+            socket.create_connection((ip, port or dymo.PORT), timeout=1.5).close()
+            return True
+        except OSError:
+            return False
+
+    def busy(self, kind):
+        if any(time.time() - t < 8 for t in RECENT.values()):          # LabelDesk just sent something
+            return True
+        if WINDOWS:
+            return False
+        try:
+            return ipp.printer(queue_for(kind))["state"] == "printing"
+        except (LookupError, OSError):
+            return False
+
+
+AUTO = autoprint.Auto(QueueOps(), can_manage=not WINDOWS)
+
+
+def expected_stock(kind, cfg=None):
+    return labels(cfg)[kind]["stock"].split()[0]
+
+
+def roll_check(kind):
+    """None, or why this label shouldn't print right now (wrong roll / no labels) — the page offers Print anyway."""
+    if not config().get("auto_printers", True):
+        return None
+    try:
+        r = AUTO.roll(kind)
+    except Exception:                                              # noqa: BLE001 — the roll is a nicety, never block on it
+        return None
+    if not r:
+        return None
+    printer = "550 Turbo" if kind == "tag" else "5XL"
+    if not r["canPrint"]:
+        return f"the {printer} says {r['media']}"
+    want = expected_stock(kind)
+    if r["stock"] and r["stock"] != want:
+        return (f"the {printer} has {r['name']} labels loaded, but LabelDesk is set to print {dymo.describe_roll(want) or want}"
+                + (" — change it in Settings → Tag labels" if kind == "tag" else ""))
+    return None
+
+
 def printers():
-    """Each configured queue: ok? plus the state in plain English (ipp.py / winprint)."""
+    """Each configured queue: ok? plus the state in plain English (ipp.py / winprint), the roll in it, and what was
+    found on the network."""
+    out, auto = _printers(), bool(config().get("auto_printers", True))
+    for kind in ("tag", "ship"):
+        try:
+            out[kind]["roll"] = AUTO.roll(kind) if auto else None
+        except Exception:                                          # noqa: BLE001
+            out[kind]["roll"] = None
+        out[kind]["expect"] = expected_stock(kind)
+    out["network"] = {"found": AUTO.found, "offers": AUTO.offers, "scannedAt": AUTO.at, "scanning": AUTO.scanning,
+                      "auto": auto, "canManage": AUTO.can_manage}
+    return out
+
+
+def use_printer(kind, ip):
+    """Settings → Printers on the network → Use for tags / shipping: point this kind's queue at that printer."""
+    if kind not in ("tag", "ship"):
+        raise ValueError("kind must be tag or ship")
+    p = next((p for p in AUTO.found if p["ip"] == ip), None)
+    if not p:
+        raise ValueError("that printer isn't on the network any more — Look again")
+    if WINDOWS:
+        return windows_add_dymo("5XL" if p["model"] == "5XL" else "550", ip)
+    ops, q = AUTO.ops, queue_for(kind)
+    if ops.uri(q) is None:
+        ops.add(kind, q, ip, p["port"], p["model"])
+    else:
+        ops.repoint(q, ip, p["port"])
+    AUTO.forget_roll(kind)
+    AUTO.event(f"{'Tags' if kind == 'tag' else 'Shipping labels'} now print on the {autoprint.MODEL_NAME[p['model']]} at {ip}.")
+    AUTO.offers = [o for o in AUTO.offers if o["ip"] != ip]
+
+
+def _printers():
     out = {}
     if WINDOWS:
         for kind in ("tag", "ship"):
@@ -752,11 +988,15 @@ class Handler(BaseHTTPRequestHandler):
                 cfg = config()
                 return self.send_json({"version": VERSION, "labels": labels(cfg), "tagStocks": TAG_STOCKS,
                                        "tagLabel": labels(cfg)["tag"]["stock"].split()[0], "flipTag": cfg["flip_tag"], "tagOffsetMm": float(cfg.get("tag_offset_mm") or 0),
-                                       "barcodeCheck": barcode.available(), "platform": "windows" if WINDOWS else "mac" if MAC else "linux"})
+                                       "barcodeCheck": barcode.available(), "started": STARTED, "platform": "windows" if WINDOWS else "mac" if MAC else "linux"})
             if path == "/api/printers":
                 return self.send_json(printers())
+            if path == "/api/printers/events":               # ?after=<id>: what LabelDesk did by itself
+                return self.send_json({"events": AUTO.since(int((q.get("after") or ["0"])[0]))})
             if path == "/api/update":
                 return self.send_json(check_update())
+            if path == "/api/versions":                      # Settings → Version
+                return self.send_json(versions_info())
             if path == "/api/update/log":
                 try:
                     with open(update_log(), encoding="utf-8", errors="replace") as f:
@@ -893,6 +1133,16 @@ class Handler(BaseHTTPRequestHandler):
                 except FileNotFoundError:
                     pass
                 return self.send_json({"ok": True})
+            if path == "/api/version/use":                   # {version: "0.8.1" | "newest", everyone: bool}
+                use_version(b.get("version"), bool(b.get("everyone")))
+                _update.update(at=0, result=None)
+                return self.send_json({"ok": True})
+            if path == "/api/printers/scan":                 # Settings → Look again
+                AUTO.scan()
+                return self.send_json({"ok": True})
+            if path == "/api/printers/use":                  # {kind, ip}: use this printer found on the network
+                use_printer(str(b.get("kind") or ""), str(b.get("ip") or ""))
+                return self.send_json({"ok": True})
             if path == "/api/update/run":                    # Fedora: Update now (no local changes only)
                 run_update_now()
                 _update.update(at=0, result=None)
@@ -933,6 +1183,8 @@ def main():
     dirs = ([] if MAC else [(SPOOL, True)]) + ([(dl, False)] if cfg["watch_downloads"] else [])   # Mac: no print-dialog printer
     INBOX = Inbox(dirs)
     threading.Thread(target=INBOX.run, daemon=True).start()
+    if cfg.get("auto_printers", True):
+        threading.Thread(target=AUTO.run, daemon=True).start()
     try:
         migrate_logo()
     except OSError as e:

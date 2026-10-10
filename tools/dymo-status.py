@@ -3,8 +3,8 @@
 status request DYMO's own driver sends between jobs (ESC A 0 = "status, no lock"; see LabelWriterLanguageMonitorV2.cpp
 in github.com/dymosoftware/Drivers) and nothing else, so it can't start, hold or cancel a print.
 
-Purpose: find out whether the status reply carries a labels-remaining count (the 550 series reads the roll's NFC chip)
-before LabelDesk shows one. DYMO's driver only reads bytes 0-4, 8, 10 and 21; the meaning of the others is unknown.
+Purpose: check on the REAL printers what LabelDesk reads (server/dymo.py, DYMO's 550 Technical Reference): roll SKU in
+bytes 11-22, labels left in 27-28. DYMO's own driver only reads bytes 0-4, 8, 10 and 21.
     tools/dymo-status.py 192.0.2.10                 # one reading
     tools/dymo-status.py 192.0.2.10 --save a.json   # save it; print a few labels; then:
     tools/dymo-status.py 192.0.2.10 --compare a.json   # which bytes changed, and by how much
@@ -43,6 +43,14 @@ def describe(st):
              f"head:    {HEAD.get(st[8] & 3, f'unknown ({st[8] & 3})')}   voltage: {VOLTAGE.get(st[21] & 0xF, 'OK')}",
              "bytes:   " + " ".join(f"{i:02d}:{b:02x}" for i, b in enumerate(st[:16])),
              "         " + " ".join(f"{i:02d}:{b:02x}" for i, b in enumerate(st[16:], 16))]
+    try:                                                            # per DYMO's 550 Technical Reference (server/dymo.py)
+        import os
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "server"))
+        import dymo
+        p = dymo.parse_status(bytes(st))
+        lines.append(f"roll:    SKU {p['sku'] or '(none)'} · labels left {p['remaining']} · media: {p['media']}   (Technical Reference layout)")
+    except (ImportError, ValueError):
+        pass
     return "\n".join(lines)
 
 

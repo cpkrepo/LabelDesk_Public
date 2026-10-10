@@ -27,19 +27,20 @@ the Windows app's "Install update" uses.
   screenshots, .dymo files from work, databases, config.json or keys (.gitignore blocks the usual ones — don't force-add).
 - Outbound calls: ConnectWise (when ON) and, after each print, a GET of GitHub's VERSION file (nothing else, no label data).
 
-## Shipping a change (every technician, every change — no need to ask)
+## Shipping a change — only the OWNER publishes; technicians send pull requests or requests
+Who: `tools/update.sh` decides (GitHub admin of the repo, or `git config labeldesk.publisher true` = owner).
 1. Make the change; test at the level it needs (labeldesk-testing skill; app.js changes need the render check) and say
-   which level you reached.
-2. Changelog: add a line for the people using it under `## Unreleased` in CHANGELOG.md (update.sh turns it into the
-   version's heading + release notes). Version: the version lives only in `./VERSION`. Raise it yourself for a feature (0.6.x → 0.7.0); otherwise leave it —
-   update.sh adds one to the last number.
-3. Commit with a real message, then run `tools/update.sh`: it commits leftovers, rebases this PC's commits onto GitHub's
-   newest main, bumps VERSION if needed, runs the unit tests, pushes main + tag `v<version>`, restarts the app.
-4. If update.sh stops on a **conflict** (exit 2): nothing was pushed and the checkout is back as it was. Merge it here —
-   `git fetch && git rebase origin/main`, resolve keeping BOTH sides' intent, run the tests (and render check if app.js
-   changed), `git rebase --continue`, then `tools/update.sh` again. Tests failing (exit 3): fix, don't skip.
-   Push refused (exit 4): this technician has no write access — say so; keep the commits.
-5. When asked to "update LabelDesk": run `tools/update.sh --check` first and report what's local/unpushed, then `tools/update.sh`.
-6. A version is bad ("roll back", "undo", "go back to 0.7.0"): labeldesk-rollback skill (`tools/rollback.sh`). Never
-   force-push or delete tags — GitHub refuses it (rulesets), and rollback = an old version republished as a new number.
+   which level you reached. Add a line for the people using it under `## Unreleased` in CHANGELOG.md.
+2. Version: only in `./VERSION`; raise it yourself for a feature (0.6.x → 0.7.0), otherwise leave it.
+3. Commit with a real message, then `tools/update.sh`. Technician: rebases onto main, runs the unit tests, pushes branch
+   `change/<pc>-<date>` and opens a **pull request** for the owner (no version, no tag — nothing reaches main or other
+   PCs until the owner merges it). Owner: publishes (VERSION bump, changelog, tests, main + tag `v<version>`), and also
+   publishes pull requests merged on GitHub since the last version. Never push to main or tags another way, never
+   bypass: GitHub rulesets require owner-approved PRs, and only the owner creates v* tags.
+4. Conflict (exit 2): nothing sent; `git fetch && git rebase origin/main`, resolve keeping BOTH sides' intent, run the
+   tests, `git rebase --continue`, `tools/update.sh` again. Tests failing (exit 3): fix, don't skip. Push refused (exit 4):
+   not invited / not signed in (SETUP.md section 5) — say so; keep the commits.
+5. "Update LabelDesk": `tools/update.sh --check` first, report local/unsent work, then `tools/update.sh`.
+6. Just an idea, no code: file it — `gh issue create --repo cpkrepo/LabelDesk_Public --label "feature request"` (or the
+   Feature request form). Bad version: Settings → Version in the app (this PC; owner: every PC) — labeldesk-rollback skill.
 - Tick or add items in docs/dev/open-items.md when a fact changes.

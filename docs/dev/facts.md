@@ -39,3 +39,11 @@
 10. Headless Chrome quirk: createImageBitmap()/img.decode() of large images can stall under --virtual-time-budget —
    test detection with Node (tests/detect.test.mjs) and UI wiring with canvas-drawn pages (tests/render/ship.js). The app
    decodes with <img>.decode() (createImageBitmap hung even in real time there).
+11. **550-series status (DYMO Technical Reference, 2021)**, 32 bytes for ESC A 0: 0 engine · 1–4 job id · 8 head ·
+   10 main bay (8 = ok, 6/7 = low, 2 = no media, 1 = cover open, 10 = counterfeit) · 11–22 roll SKU (text) · 23–26 error
+   id · 27–28 labels remaining (u16 LE) · 30 head voltage. ESC U (63 bytes): magic CAB6, SKU 8–19, length mm @40, width
+   mm @42, total @50. DYMO's Linux driver reads head voltage from byte 21 instead (inside the SKU per the reference) —
+   so LabelDesk only shows SKU/count, never acts on byte 21/30. **Not yet read from the shop's real printers**
+   (`tools/dymo-status.py <ip>` shows them). LabelDesk never sends ESC U/ESC A while that printer is printing.
+12. Adding/changing CUPS queues needs no password for admin users (Fedora wheel, Mac admin — checked 2026-10-10 on
+   Fedora 44; CI on macOS) — that's what lets autoprint.py set printers up by itself.

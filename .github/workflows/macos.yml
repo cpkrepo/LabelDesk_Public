@@ -1,6 +1,7 @@
-# The Mac version on a real Mac, every push: unit tests on the Python and bash macOS ships (3.9 / 3.2), then DYMO
-# Connect for Mac's driver + tools/install-all.sh + a print of a tag and a 4×6 through that driver to the fake
-# LabelWriter (tests/print_check.py checks size, margins and orientation of what the "printer" got).
+# The Mac version on a real Mac, every push and pull request: unit tests on the Python and bash macOS ships (3.9 / 3.2),
+# DYMO Connect for Mac's driver, LabelDesk installed with NO printer setup while two fake LabelWriters announce
+# themselves on Bonjour → LabelDesk must add both queues itself and read their rolls (tests/auto_check.py), then a tag
+# and a 4×6 print through DYMO's Mac driver (tests/print_check.py checks size, margins, orientation).
 name: macOS
 on:
   push:
@@ -33,18 +34,25 @@ jobs:
           sudo installer -pkg ~/dymo.pkg -target / || echo "installer reported a problem — checking the driver files anyway"
           ls -l /Library/Printers/PPDs/Contents/Resources/lw550t.ppd.gz /Library/Printers/PPDs/Contents/Resources/lw5xl.ppd.gz \
                 /Library/Printers/DYMO/Filters/V2/raster2dymolw
-      - name: Fake LabelWriter + tools/install-all.sh
+      - name: Two fake LabelWriters announcing themselves on Bonjour; LabelDesk installed WITHOUT printer setup
         run: |
-          mkdir -p /tmp/ldjobs
-          nohup /usr/bin/python3 tests/fake_labelwriter.py /tmp/ldjobs > /tmp/fake.log 2>&1 &
+          sudo ifconfig lo0 alias 127.0.0.2 up
+          mkdir -p /tmp/ld-tag /tmp/ld-ship
+          nohup /usr/bin/python3 tests/fake_labelwriter.py /tmp/ld-tag --bind 127.0.0.1 --mdns "DYMO LabelWriter 550 Turbo" --roll 30252 > /tmp/fake-tag.log 2>&1 &
+          nohup /usr/bin/python3 tests/fake_labelwriter.py /tmp/ld-ship --bind 127.0.0.2 --mdns "DYMO LabelWriter 5XL" --roll 1744907 --left 212 > /tmp/fake-ship.log 2>&1 &
           sleep 1
-          tools/install-all.sh 127.0.0.1 127.0.0.1
-      - name: Print through the Mac driver
-        run: /usr/bin/python3 tests/print_check.py /tmp/ldjobs
+          tools/install-app.sh
+      - name: Printers set themselves up (queues added by LabelDesk, rolls read)
+        run: /usr/bin/python3 tests/auto_check.py --wait 90
+      - name: Print through the Mac driver on the queues LabelDesk added
+        run: |
+          lpstat -v
+          /usr/bin/python3 tests/print_check.py /tmp/ld-tag /tmp/ld-ship
+          tools/doctor.sh
       - name: Logs
         if: always()
         run: |
-          cat /tmp/fake.log || true
+          cat /tmp/fake-tag.log /tmp/fake-ship.log || true
           tail -50 ~/Library/Logs/LabelDesk.log || true
           lpstat -t || true
           sudo tail -40 /var/log/cups/error_log || true
@@ -52,4 +60,4 @@ jobs:
         if: always()
         with:
           name: printed-labels
-          path: /tmp/ldjobs/*.pbm
+          path: /tmp/ld-*/*.pbm

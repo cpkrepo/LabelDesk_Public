@@ -21,6 +21,8 @@ nav button.on { background: var(--bg); color: var(--ink); font-weight: 600; }
 .printers { margin-left: auto; display: flex; gap: 14px; font-size: 13px; color: var(--dim); }
 .printers span::before { content: "●"; margin-right: 5px; color: var(--bad); }
 .printers span.ok::before { color: var(--ok); }
+.printers span.ok.low::before { color: #d08700; }
+#net-printers li { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
 main { padding: 20px; max-width: 1200px; margin: 0 auto; }
 .split { display: grid; grid-template-columns: minmax(320px, 440px) 1fr; gap: 20px; align-items: start; }
 @media (max-width: 860px) { .split { grid-template-columns: 1fr; } }

@@ -18,9 +18,11 @@ network printers. No account, no server, nothing about your labels leaves the PC
   download it — LabelDesk finds the label on the page, turns it upright, fits it, and checks the barcode scans before it
   prints. Adjust with ↺ ↻ 180° or by dragging a box.
 - **The preview is exactly what prints** — it's drawn at the printers' own 300 dpi.
+- **Sets the printers up by itself:** finds the DYMO printers on the network, follows them when their address changes,
+  and reads the loaded roll — which labels, how many are left — so it never prints on the wrong one.
 - **Follows every job** until the printer has finished, and explains problems in plain English (out of labels, paused,
   printer not answering) with a Resume / Print again button.
-- **Updates itself** from this repo, and anyone in the shop can improve it with Claude Code (see below).
+- **Updates itself** from this repo; ideas and changes from the shop go to the owner for approval (see below).
 
 ## Install
 
@@ -72,20 +74,22 @@ After each print LabelDesk asks GitHub for the newest version number (one small 
 sent) and shows a notice when there's a newer one:
 - **Windows:** **Install update** — downloads the installer from the release, checks its SHA-256, installs, restarts.
 - **Mac and Fedora:** **Update now** — or run `tools/update.sh` in `~/LabelDesk_Public` if this computer has changes of
-  its own (they're merged in and shared, see below).
+  its own (they're sent to the owner as a pull request, see below).
 
-Turn the check off with `"update_check": false` in the config file: Windows `%APPDATA%\LabelDesk\config.json`,
+Want an older version on this PC? **Settings → Version** (below). Turn the check off with `"update_check": false` in the config file: Windows `%APPDATA%\LabelDesk\config.json`,
 Mac `~/Library/Application Support/LabelDesk/config.json`, Fedora `~/.config/labeldesk/config.json`.
 
-## Improving LabelDesk together (Claude Code)
-Anyone with write access to this repo can change LabelDesk. Open **Claude Code** in `~/LabelDesk_Public` and ask for
-what you want. It follows `CLAUDE.md` and the skills in `.claude/skills/` (printer setup, testing, DYMO templates,
-rollback), tests the change, and ships it with `tools/update.sh`. Every PC then gets it with its next update; Windows
-installers are built automatically. Getting access and signing in: [SETUP.md section 5](SETUP.md#5-before-your-first-change-github-access).
-
-**A new version is worse? Roll it back** — ask Claude Code to "roll LabelDesk back", or run `tools/rollback.sh` to
-list versions and `tools/rollback.sh 0.7.1 "what was wrong"` to put an older version back for everyone. Nothing is lost:
-GitHub keeps every version and refuses changes that would rewrite the history.
+## Ideas and changes
+LabelDesk is maintained by its owner, and every change is approved before anyone gets it:
+- **Ask for a feature or report a problem:** [Issues → New issue](https://github.com/cpkrepo/LabelDesk_Public/issues/new/choose)
+  (Feature request · Something's wrong · Please roll back). Never include customer names or real labels — this repo is public.
+- **Propose a change yourself (with Claude Code):** open Claude Code in `~/LabelDesk_Public`, ask for the change. It
+  follows `CLAUDE.md` and the skills in `.claude/skills/`, tests it, and `tools/update.sh` sends it as a **pull request**.
+  The owner reviews it; only after it's merged and published does it reach the other PCs. Access and signing in:
+  [SETUP.md section 5](SETUP.md#5-before-your-first-change-github-access).
+- **A version turned out worse?** **Settings → Version** lists every version with what changed; pick one and press
+  **Use this version** — LabelDesk switches by itself and stays there until **Back to the newest version**. The owner
+  can tick **for every PC** to put an older version back for everyone. GitHub keeps every version.
 
 ## If something doesn't print
 Run `tools/doctor.sh` in `~/LabelDesk_Public` (Mac and Fedora): it checks the driver, printers and app and says what's

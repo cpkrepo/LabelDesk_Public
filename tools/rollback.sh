@@ -29,7 +29,15 @@ if [ $# -eq 0 ]; then
   exit 0
 fi
 
+slug() { git remote get-url "$REMOTE" 2>/dev/null | sed -E 's#^.*github\.com[:/]##; s#\.git$##'; }
+publisher() { # only the repo's owner publishes versions (same rule as tools/update.sh)
+  case "${LABELDESK_ROLE:-}" in publisher) return 0;; contributor) return 1;; esac
+  [ "$(git config --get labeldesk.publisher || true)" = true ] && return 0
+  command -v gh >/dev/null 2>&1 && [ "$(gh api "repos/$(slug)" --jq .permissions.admin 2>/dev/null)" = true ]
+}
 old=${1#v}; why=${2:-}
+publisher || die "only the owner publishes versions, rollbacks included. Ask for it instead:
+  gh issue create --repo $(slug) --title \"Please roll LabelDesk back to $old\" --body \"${why:-what is wrong with the newest version}\"" 5
 git rev-parse -q --verify "refs/tags/v$old" >/dev/null || die "there's no version $old (tools/rollback.sh lists them)"
 [ "$old" != "$remote_ver" ] || die "$old is already the newest version"
 [ -z "$(git status --porcelain --untracked-files=no)" ] || die "this PC has uncommitted changes — run tools/update.sh first (or git stash)"

@@ -15,6 +15,7 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from unittest import mock
 
+os.environ["LABELDESK_AUTO_PRINTERS"] = "0"                    # no printer polling in tests
 os.environ["LABELDESK_DATA"] = tempfile.mkdtemp()
 os.environ["LABELDESK_KEYS"] = "file"                                  # never touch the real keyring in tests
 os.environ["HOME"] = tempfile.mkdtemp()
@@ -374,6 +375,75 @@ class WindowsInstallUpdate(unittest.TestCase):
     def test_not_newer_is_refused(self):
         with mock.patch.object(app, "WINDOWS", True), self.assertRaises(ValueError):
             app.install_windows_update(app.VERSION)
+
+
+class WindowsOlderVersion(WindowsInstallUpdate):
+    """Settings → Version on Windows: an OLDER version uninstalls the current one first (an older MSI won't replace it)."""
+    def test_older_version_uninstalls_first(self):
+        msi = b"old MSI"
+        sha = (hashlib.sha256(msi).hexdigest() + "\n").encode()
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(app, "WINDOWS", True), mock.patch.object(app, "VERSION", "9.9.10"), \
+                mock.patch.object(app, "DATA", d), mock.patch.object(app, "download", self.fake_downloads(msi, sha)), \
+                mock.patch.object(app.subprocess, "Popen"), mock.patch.object(app.threading, "Timer"):
+            app.install_windows_version("9.9.9")
+            script = open(os.path.join(d, "update", "install-update.ps1"), encoding="utf-8").read()
+        self.assertLess(script.index("'/x'"), script.index("'/i'"))           # uninstall, then install the older one
+        self.assertIn("DisplayName -eq 'LabelDesk'", script)
+
+    def test_newer_version_does_not_uninstall(self):
+        msi = b"MSI bytes"
+        _, _, script = self.run_install(msi, (hashlib.sha256(msi).hexdigest() + "\n").encode())
+        self.assertNotIn("'/x'", script)
+
+
+class Versions(ServerBase):
+    """Settings → Version: the list from GitHub's releases, switching this PC (held there), and the owner-only 'every PC'."""
+    RELEASES = json.dumps([
+        {"tag_name": "v0.9.0", "published_at": "2026-10-10T12:00:00Z", "body": "- **Printers** set themselves up\n- Rolls\n\n---\nfooter",
+         "assets": [{"name": "LabelDesk-0.9.0.msi"}, {"name": "LabelDesk-0.9.0.msi.sha256"}]},
+        {"tag_name": "v0.7.2", "published_at": "2026-10-10T10:00:00Z", "body": "- Rollback", "assets": []},
+        {"tag_name": "v0.8.1", "published_at": "2026-10-10T11:00:00Z", "body": "", "draft": False, "assets": []},
+        {"tag_name": "not-a-version", "assets": []}]).encode()
+
+    def setUp(self):
+        super().setUp()
+        app._versions.update(at=0, list=None)
+
+    def test_list_is_newest_first_with_notes(self):
+        with mock.patch.object(app, "download", return_value=self.RELEASES), mock.patch.object(app, "is_publisher", return_value=False):
+            code, v = self.call("versions")
+        self.assertEqual(code, 200)
+        self.assertEqual([x["version"] for x in v["versions"]], ["0.9.0", "0.8.1", "0.7.2"])
+        self.assertEqual(v["versions"][0]["notes"], ["**Printers** set themselves up", "Rolls"])
+        self.assertEqual((v["newest"], v["publisher"], v["versions"][0]["msi"], v["versions"][1]["msi"]), ("0.9.0", False, True, False))
+
+    def test_offline_says_so(self):
+        with mock.patch.object(app, "download", side_effect=OSError("no network")), mock.patch.object(app, "is_publisher", return_value=False):
+            v = self.call("versions")[1]
+        self.assertIn("couldn't reach GitHub", v["error"])
+
+    def test_switching_runs_the_tool_outside_labeldesk(self):
+        with mock.patch.object(app, "git_state", return_value={"dirty": False, "ahead": 0}), \
+                mock.patch.object(app, "run_detached") as run:
+            self.assertEqual(self.call("version/use", {"version": "0.8.1"})[0], 200)
+            self.assertEqual(self.call("version/use", {"version": "newest"})[0], 200)
+        self.assertEqual([c.args[0] for c in run.call_args_list], ["tools/switch-version.sh 0.8.1", "tools/switch-version.sh newest"])
+
+    def test_every_pc_is_owner_only_and_local_work_is_never_lost(self):
+        with mock.patch.object(app, "git_state", return_value={"dirty": False, "ahead": 0}), \
+                mock.patch.object(app, "run_detached") as run, mock.patch.object(app, "is_publisher", return_value=False):
+            code, r = self.call("version/use", {"version": "0.8.1", "everyone": True})
+        self.assertEqual((code, run.called), (400, False))
+        self.assertIn("only the owner", r["error"])
+        with mock.patch.object(app, "git_state", return_value={"dirty": True, "ahead": 0}), mock.patch.object(app, "run_detached") as run:
+            self.assertEqual(self.call("version/use", {"version": "0.8.1"})[0], 400)
+        self.assertFalse(run.called)
+        self.assertEqual(self.call("version/use", {"version": "0.8.1; rm -rf ~"})[0], 400)
+
+    def test_a_held_pc_gets_no_update_notice(self):
+        with mock.patch.object(app, "config", return_value={**app.config(), "hold_version": "0.8.1"}):
+            u = app.check_update()
+        self.assertEqual((u["held"], u["newer"]), ("0.8.1", False))
 
 
 class TagLabelSetting(ServerBase):

@@ -9,8 +9,12 @@
 #     databases, config) is NOT committed and is listed instead: it may be customer data and the repo is public.
 #  2. Local commits are replayed on top of GitHub's newest version (git rebase).
 #     A conflict stops everything and puts the checkout back exactly as it was (your commits are kept).
-#  3. If this PC had changes: the version goes up one (0.6.0 → 0.6.1, or stays if the changes already raised it),
-#     the unit tests must pass, then it is pushed to GitHub with a tag (v0.6.1). Failing tests → nothing is pushed.
+#  3. This PC's changes, tested (failing tests → nothing leaves this PC):
+#     · on a TECHNICIAN's PC they go to GitHub as a PULL REQUEST (branch change/<pc>-<date>) for the owner to review —
+#       nothing reaches main or the other PCs until the owner merges and publishes it;
+#     · on the OWNER's PC ("publisher": GitHub admin, or git config labeldesk.publisher true) they are published: the
+#       version goes up one (or stays if the change raised it), CHANGELOG.md gets its notes, main + tag v<version> are
+#       pushed. The owner's update.sh also publishes pull requests merged on GitHub since the last version.
 #  4. The app is restarted on the new code (tools/install-app.sh) if it's installed on this PC.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -30,7 +34,7 @@ changelog() { # changelog VERSION UPSTREAM: "## Unreleased" notes become "## VER
   local notes tmp; tmp=$(mktemp)
   notes=$(awk '/^## Unreleased/{f=1;next} /^## /{f=0} f' CHANGELOG.md | grep '[^[:space:]]' || true)
   if [ -z "$notes" ]; then
-    notes=$(git log --no-merges --format='- %s' "$2..HEAD" | grep -vE '^- (LabelDesk [0-9.]+$|Local changes on )' || true)
+    notes=$(git log --no-merges --format='- %s' "$2..HEAD" | grep -vE '^- (LabelDesk [0-9.]+(: changelog)?$|Local changes on |Merge )' || true)
     [ -n "$notes" ] || notes="- Small fixes."
   fi
   HEAD_LINE="## $1 — $(date +%Y-%m-%d)" NOTES="$notes" awk '        # (ENVIRON: BSD awk rejects newlines in -v)
@@ -38,6 +42,19 @@ changelog() { # changelog VERSION UPSTREAM: "## Unreleased" notes become "## VER
     skip && /^## / { skip=0; print "" }
     !skip { print }' CHANGELOG.md > "$tmp" && mv "$tmp" CHANGELOG.md
   git add CHANGELOG.md; git commit --quiet -m "LabelDesk $1: changelog"
+}
+slug() { git remote get-url "$REMOTE" 2>/dev/null | sed -E 's#^.*github\.com[:/]##; s#\.git$##'; }
+publisher() { # may this PC publish versions? Only the repo's owner (admin). Everyone else sends pull requests.
+  case "${LABELDESK_ROLE:-}" in publisher) return 0;; contributor) return 1;; esac
+  [ "$(git config --get labeldesk.publisher || true)" = true ] && return 0
+  command -v gh >/dev/null 2>&1 && [ "$(gh api "repos/$(slug)" --jq .permissions.admin 2>/dev/null)" = true ]
+}
+run_tests() {
+  echo "→ running the unit tests…"
+  local log=${TMPDIR:-/tmp}/labeldesk-update-tests.log
+  if ! python3 -m unittest discover -s tests -q >"$log" 2>&1; then
+    tail -20 "$log"; die "tests failed — nothing left this PC. Full log: $log" 3
+  fi
 }
 newer() { # newer A B → true if version A > version B
   [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)" = "$1" ]; }
@@ -75,39 +92,80 @@ if [ ${#new_other[@]} -gt 0 ]; then
   printf '    %s\n' "${new_other[@]}"
 fi
 
-# ---- 2. nothing of ours to merge: just move to GitHub's version
-if [ "$ahead" -eq 0 ]; then
-  if [ "$behind" -eq 0 ]; then echo "✓ already up to date ($(ver))"
-  else git merge --quiet --ff-only "$up"; echo "✓ updated to $(ver)"; fi
-else
-  # ---- our commits on top of GitHub's newest
+# ---- 2. this PC's commits on top of GitHub's newest (commits GitHub already has — a merged pull request — drop out)
+if [ "$ahead" -gt 0 ] && [ "$behind" -gt 0 ]; then
   start=$(git rev-parse HEAD)
-  if [ "$behind" -gt 0 ] && ! git rebase --quiet "$up" >/dev/null 2>&1; then
+  if ! git rebase --quiet "$up" >/dev/null 2>&1; then
     git rebase --abort 2>/dev/null || true
     git reset --quiet --hard "$start"
-    die "this PC's changes and GitHub's changes touch the same lines — nothing was changed or pushed.
+    die "this PC's changes and GitHub's changes touch the same lines — nothing was changed or sent.
   Your work is safe in local commits ($ahead). Open Claude Code in $(pwd) and ask it to
-  \"merge my unpushed LabelDesk changes with GitHub's main, then run tools/update.sh\"." 2
+  \"merge my unsent LabelDesk changes with GitHub's main, then run tools/update.sh\"." 2
   fi
-  # ---- 3. new version, tests, push
-  local_ver=$(ver)
-  if newer "$local_ver" "$remote_ver"; then new_ver=$local_ver                     # the change already set a version
-  else IFS=. read -r a b c <<<"$remote_ver"; new_ver="$a.$b.$((${c:-0} + 1))"; fi
-  if [ "$new_ver" != "$local_ver" ]; then
-    echo "$new_ver" > VERSION; git add VERSION; git commit --quiet -m "LabelDesk $new_ver"
+  ahead=$(git rev-list --count "$up..HEAD")
+elif [ "$ahead" -eq 0 ] && [ "$behind" -gt 0 ]; then
+  git merge --quiet --ff-only "$up"
+fi
+[ "$ahead" -gt 0 ] || git config --unset labeldesk.proposal 2>/dev/null || true   # nothing of ours left out there
+python3 - <<'PY' 2>/dev/null || true                     # updating = following updates again (Settings → Version hold off)
+import json, os, sys
+f = os.path.expanduser("~/Library/Application Support/LabelDesk/config.json" if sys.platform == "darwin" else "~/.config/labeldesk/config.json")
+c = json.load(open(f))
+if c.pop("hold_version", None) is not None:
+    json.dump(c, open(f + ".tmp", "w"), indent=2); os.replace(f + ".tmp", f)
+PY
+
+# ---- 3a. owner: publish (this PC's commits, or pull requests merged on GitHub since the last version)
+last_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD 2>/dev/null || true)
+if publisher; then
+  if [ "$ahead" -eq 0 ] && { [ -z "$last_tag" ] || [ "$(git rev-parse "$last_tag^{commit}")" = "$(git rev-parse HEAD)" ]; }; then
+    echo "✓ already up to date ($(ver))"
+  else
+    local_ver=$(ver)
+    if newer "$local_ver" "$remote_ver"; then new_ver=$local_ver                   # the change already set a version
+    elif [ -n "$last_tag" ] && ! git rev-parse -q --verify "refs/tags/v$remote_ver" >/dev/null; then
+      new_ver=$remote_ver                                                       # raised in a merged pull request
+    else IFS=. read -r a b c <<<"$remote_ver"; new_ver="$a.$b.$((${c:-0} + 1))"; fi
+    if [ "$new_ver" != "$local_ver" ]; then
+      echo "$new_ver" > VERSION; git add VERSION; git commit --quiet -m "LabelDesk $new_ver"
+    fi
+    changelog "$new_ver" "${last_tag:-$up}"
+    run_tests
+    git tag -f "v$new_ver" >/dev/null
+    if ! git push --quiet "$REMOTE" "HEAD:$BRANCH" "refs/tags/v$new_ver"; then
+      git tag -d "v$new_ver" >/dev/null
+      die "GitHub refused the push (someone pushed meanwhile: just run this again). Your changes are kept here." 4
+    fi
+    echo "✓ published LabelDesk $new_ver"
   fi
-  changelog "$new_ver" "$up"
-  echo "→ running the unit tests before pushing…"
-  if ! python3 -m unittest discover -s tests -q >/tmp/labeldesk-update-tests.log 2>&1; then
-    tail -20 /tmp/labeldesk-update-tests.log
-    die "tests failed — nothing was pushed. Full log: /tmp/labeldesk-update-tests.log" 3
+
+# ---- 3b. technician: send this PC's changes as a pull request for the owner to review
+elif [ "$ahead" -gt 0 ]; then
+  run_tests
+  host=$(hostname -s 2>/dev/null || hostname); pc=$(echo "$host" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9-\n' '-')
+  branch=$(git config --get labeldesk.proposal || echo "change/$pc-$(date +%Y%m%d-%H%M)")
+  if ! git push --quiet --force-with-lease "$REMOTE" "HEAD:refs/heads/$branch"; then
+    die "GitHub refused the push — this PC isn't signed in to GitHub, or you haven't accepted the invite to the repo
+  (SETUP.md section 5). Your changes are kept here as local commits." 4
   fi
-  git tag -f "v$new_ver" >/dev/null
-  if ! git push --quiet "$REMOTE" "HEAD:$BRANCH" "refs/tags/v$new_ver"; then
-    die "GitHub refused the push (no write access, or someone pushed meanwhile: just run this again).
-  Your changes are kept here as local commits." 4
+  git config labeldesk.proposal "$branch"
+  title=$(git log --reverse --no-merges --format=%s "$up..HEAD" | grep -vE '^(Local changes on |LabelDesk [0-9.]+$)' | head -1 || true)
+  title=${title:-Changes from $host}
+  notes=$(awk '/^## Unreleased/{f=1;next} /^## /{f=0} f' CHANGELOG.md 2>/dev/null | grep '[^[:space:]]' || true)
+  body="$(printf '**What changes for the people using LabelDesk:**\n%s\n\n**Commits:**\n%s\n\nUnit tests passed on %s (%s). Sent by tools/update.sh — nothing reaches main or the other PCs until the owner merges and publishes it.' \
+    "${notes:-(no CHANGELOG notes)}" "$(git log --reverse --no-merges --format='- %s' "$up..HEAD")" "$host" "$(uname -s)")"
+  url=""
+  if command -v gh >/dev/null 2>&1; then
+    url=$(gh pr view "$branch" --repo "$(slug)" --json url,state --jq 'select(.state == "OPEN") | .url' 2>/dev/null || true)
+    if [ -n "$url" ]; then echo "✓ updated your pull request: $url"
+    elif url=$(gh pr create --repo "$(slug)" --base "$BRANCH" --head "$branch" --title "$title" --body "$body" 2>/dev/null); then
+      echo "✓ sent to the owner as a pull request: $url"
+    else url=""; fi
   fi
-  echo "✓ pushed LabelDesk $new_ver to GitHub"
+  [ -n "$url" ] || echo "✓ sent as branch $branch — open the pull request: https://github.com/$(slug)/compare/$BRANCH...$branch"
+  echo "  This PC runs your change now; the other PCs get it when the owner merges and publishes it."
+else
+  echo "✓ already up to date ($(ver))"
 fi
 
 # ---- 4. restart on the new code (only where the app is installed)

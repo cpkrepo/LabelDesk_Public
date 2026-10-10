@@ -1,0 +1,15 @@
+name: Please roll back
+description: The newest version is worse — ask the owner to put an older one back for everyone
+title: "Please roll LabelDesk back to "
+labels: ["rollback"]
+body:
+  - type: textarea
+    id: why
+    attributes:
+      label: What's wrong with the newest version?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version to go back to (see CHANGELOG.md), if you know

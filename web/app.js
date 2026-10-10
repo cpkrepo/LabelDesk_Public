@@ -268,11 +268,12 @@ let updateHidden = "";
 async function checkUpdate() {
   let u;
   try { u = await api("update"); } catch { return; }
-  $("#about-update").textContent = !u.enabled ? "Update check is off (config.json update_check)."
+  $("#about-update").textContent = u.held ? `This PC is held at version ${u.held} (Settings → Version).`
+    : !u.enabled ? "Update check is off (config.json update_check)."
     : u.error ? `Couldn't check for updates (${u.error}).`
     : u.newer ? `Version ${u.latest} is available.` : `Up to date (checked after the last print).`;
   const bar = $("#updatebar");
-  if (!u.enabled || !u.newer || updateHidden === u.latest) { bar.hidden = true; return; }
+  if (u.held || !u.enabled || !u.newer || updateHidden === u.latest) { bar.hidden = true; return; }
   const msg = $(".msg", bar), acts = $(".acts", bar);
   const later = document.createElement("button"); later.textContent = "Later";
   later.onclick = () => { updateHidden = u.latest; bar.hidden = true; };
@@ -282,8 +283,8 @@ async function checkUpdate() {
     now.onclick = () => runUpdate("update/run", {}, u, msg, acts);
     acts.replaceChildren(now, later);
   } else if (u.how === "git") {
-    msg.innerHTML = `LabelDesk ${esc(u.latest)} is available (this PC has ${esc(u.current)}). This PC has its own changes, so they're
-      merged in a Terminal: <code>${esc(u.command)}</code>`;
+    msg.innerHTML = `LabelDesk ${esc(u.latest)} is available (this PC has ${esc(u.current)}). This PC has its own changes (sent to the
+      owner for approval), so it updates in a Terminal: <code>${esc(u.command)}</code>`;
     const copy = document.createElement("button"); copy.textContent = "Copy command";
     copy.onclick = async () => { try { await navigator.clipboard.writeText(u.command); toast("Copied"); } catch { toast("Select the command and copy it", true); } };
     acts.replaceChildren(copy, later);
@@ -318,6 +319,51 @@ async function runUpdate(path, body, u, msg, acts) {
   msg.innerHTML = `The update didn't finish. ${u.how === "git" ? `Run <code>${esc(u.command)}</code> in a Terminal to see why.` : "Try the Releases page."}`
     + (log ? `<pre class="updlog">${esc(log.slice(-800))}</pre>` : "");
 }
+
+// ---- Settings → Version: any published version on this PC (it stays there), back to the newest, or (owner) for every PC
+let VERS = null;
+async function loadVersions() {
+  try { VERS = await api("versions"); } catch (err) { $("#ver-state").textContent = err.message; return; }
+  const v = VERS, newest = v.newest;
+  $("#ver-state").textContent = v.error ? `This PC runs ${v.current}. ${v.error}.`
+    : v.held ? `This PC is held at ${v.current} — it doesn't take updates until you go back to the newest version (${newest}).`
+    : `This PC runs ${v.current}${v.current === newest ? " — the newest version" : newest ? ` (newest: ${newest})` : ""}.`;
+  $("#ver-pick").innerHTML = v.versions.map(x =>
+    `<option value="${esc(x.version)}" ${x.installable ? "" : "disabled"} ${x.current ? "selected" : ""}>${esc(x.version)} · ${esc(x.date)}` +
+    `${x.version === newest ? " · newest" : ""}${x.current ? " · on this PC" : ""}${x.installable ? "" : " · not for this system"}</option>`).join("");
+  $("#ver-everyone-row").hidden = !v.publisher;
+  $("#ver-newest").hidden = !v.held;
+  showVersionNotes();
+}
+function showVersionNotes() {
+  const x = VERS?.versions.find(x => x.version === $("#ver-pick").value);
+  $("#ver-notes").innerHTML = x ? x.notes.map(n => `<li>${esc(n.replace(/\*\*/g, ""))}</li>`).join("") : "";
+  $("#ver-use").disabled = !x || (x.current && !$("#ver-everyone").checked);
+}
+$("#ver-pick").onchange = showVersionNotes;
+$("#ver-everyone").onchange = showVersionNotes;
+async function switchVersion(version, everyone) {
+  if (busy) return toast("Wait for the print to finish first", true);
+  const what = version === "newest" ? "go back to the newest version"
+    : everyone ? `publish version ${version}'s code for EVERY PC (they all go back with their next update)`
+    : `put this PC on version ${version} (it stays there until you choose "Back to the newest version")`;
+  if (!confirm(`LabelDesk will ${what}, then restart. Go ahead?`)) return;
+  try { await api("version/use", { version, everyone }); } catch (err) { return toast(err.message, true); }
+  const from = CFG.version;
+  if (version === "newest" && VERS.current === VERS.newest && VERS.platform === "windows") {   // nothing to install
+    toast("This PC follows updates again"); return loadVersions();
+  }
+  $("#ver-msg").textContent = "Switching… LabelDesk restarts by itself (about a minute).";
+  $("#ver-use").disabled = true;
+  for (let i = 0; i < 90; i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    try { const c = await api("config"); if (c.version !== from || c.started !== CFG.started) return location.reload(); } catch { /* restarting */ }
+  }
+  let log = ""; try { log = (await api("update/log")).log; } catch {}
+  $("#ver-msg").innerHTML = "That didn't finish." + (log ? `<pre class="updlog">${esc(log.slice(-800))}</pre>` : "");
+}
+$("#ver-use").onclick = () => switchVersion($("#ver-pick").value, $("#ver-everyone").checked);
+$("#ver-newest").onclick = () => switchVersion("newest", false);
 
 // ------------------------------------------------------------------ tag form
 const form = $("#tag-form");
@@ -780,18 +826,64 @@ $$("nav button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
 document.addEventListener("keydown", e => {
   if (e.key === "Enter" && !$("#tab-ship").hidden && SHIP.src && !e.target.closest("input, textarea")) $("#ship-print").click();
 });
+// the roll the printer reports (550 series): which labels and how many are left; "" when unknown
+function rollText(r) {
+  if (!r) return "";
+  if (!r.canPrint) return ` · ${r.media}`;
+  return ` · ${r.stock || r.sku || "labels"}${r.remaining != null ? ` · ${r.remaining} left` : ""}${r.low ? " (low)" : ""}`;
+}
+let rollSwitched = "", eventsAfter = 0;
 async function loadPrinters() {
   try {
     const p = await api("printers");
-    $("#printers").innerHTML = [["tag", "550 Turbo"], ["ship", "5XL"]].map(([k, n]) =>
-      `<span class="${p[k].ok ? "ok" : ""}" title="${p[k].status.replace(/"/g, "&quot;")}">${n}${p[k].ok ? "" : `: ${p[k].status.replace(/</g, "&lt;")}`}` +
-      `${p[k].paused ? ` <button class="linkish" data-resume="${k}">Resume</button>` : ""}</span>`).join("");
+    $("#printers").innerHTML = [["tag", "550 Turbo"], ["ship", "5XL"]].map(([k, n]) => {
+      const r = p[k].roll, low = r && (r.low || !r.canPrint);
+      return `<span class="${p[k].ok ? "ok" : ""}${low ? " low" : ""}" title="${esc(p[k].status)}${r?.name ? " — " + esc(r.name) : ""}">${n}` +
+        `${p[k].ok ? esc(rollText(r)) : `: ${esc(p[k].status)}`}` +
+        `${p[k].paused ? ` <button class="linkish" data-resume="${k}">Resume</button>` : ""}</span>`;
+    }).join("");
+    // the 550 Turbo knows its roll: tags follow it (once per change — the user can still pick in Settings)
+    const tr = p.tag.roll;
+    if (tr?.stock && CFG.tagStocks[tr.stock] && tr.stock !== CFG.tagLabel && rollSwitched !== tr.stock) {
+      rollSwitched = tr.stock;
+      try {
+        await api("settings/tag-label", { label: tr.stock });
+        CFG = await api("config"); drawTagPreview(); $("#tag-label").value = CFG.tagLabel;
+        $("#tag-stock").textContent = `${CFG.tagLabel} · ${CFG.labels.tag.size}`;
+        toast(`The 550 Turbo has ${tr.name} labels loaded — tags now print on those`);
+      } catch (err) { toast(err.message, true); }
+    }
+    $("#roll-auto").textContent = tr?.stock ? `The 550 Turbo reports ${tr.name}${tr.remaining != null ? `, ${tr.remaining} left` : ""}: LabelDesk picks this by itself.` : "";
+    showNetwork(p.network);
+    const ev = (await api("printers/events?after=" + eventsAfter)).events;
+    for (const e of ev) { toast(e.text, e.level === "bad"); eventsAfter = Math.max(eventsAfter, e.id); }
     $$("[data-resume]").forEach(b => b.onclick = async () => {
       try { await api(`printers/${b.dataset.resume}/resume`, {}); } catch (err) { toast(err.message, true); }
       loadPrinters();
     });
   } catch { $("#printers").innerHTML = `<span>LabelDesk server not answering</span>`; }
 }
+// Settings → Printers on the network
+const MODEL = { "550T": "LabelWriter 550 Turbo", "550": "LabelWriter 550", "5XL": "LabelWriter 5XL" };
+function showNetwork(n) {
+  if (!n) return;
+  const offers = new Map(n.offers.map(o => [o.ip, o]));
+  const rows = n.found.map(f => {
+    const o = offers.get(f.ip), what = f.model === "5XL" ? "shipping labels" : "tags";
+    const btn = o ? ` <button class="linkish" data-use="${o.kind}" data-ip="${esc(f.ip)}">Use for ${what}</button>` : "";
+    return `<li class="${o ? "" : "ok"}">${esc(MODEL[f.model] || f.model)} · ${esc(f.ip)} <span class="hint">${esc(f.name)}${o ? "" : " — in use"}</span>${btn}</li>`;
+  });
+  $("#net-printers").innerHTML = rows.join("") || `<li>${n.scanning ? "Looking…" : n.auto ? "No DYMO printers announced themselves on this network (they may still print — see the bar at the top)." : "Looking for printers is off (config.json auto_printers)."}</li>`;
+  $$("[data-use]").forEach(b => b.onclick = async () => {
+    try { await api("printers/use", { kind: b.dataset.use, ip: b.dataset.ip }); } catch (err) { toast(err.message, true); }
+    loadPrinters();
+  });
+}
+$("#net-scan").onclick = async () => {
+  $("#net-printers").innerHTML = "<li>Looking…</li>";
+  try { await api("printers/scan", {}); } catch (err) { toast(err.message, true); }
+  loadPrinters();
+};
 
 // a data: URL → Blob without fetch() (the page's CSP only lets fetch reach LabelDesk itself)
 function dataBlob(url) {
@@ -852,6 +944,7 @@ window.addEventListener("focus", rollDate);
   $("#win-printer").hidden = $("#win-dymo").hidden = CFG.platform !== "windows";
   $("#about-version").textContent = "version " + CFG.version;
   loadCW();                                                     // may wait on ConnectWise — never hold up the app
+  loadVersions();                                               // Settings → Version (asks GitHub; never holds up the app)
   await (tagLogoReady = loadLogo());                            // the logo is part of the tag: draw (and print) with it
   await templateImagesReady(activeTemplate());
   showOffset(); showTemplates(); drawTagPreview(); showLogoState(); drawShip(); loadPrinters(); loadCustomers();

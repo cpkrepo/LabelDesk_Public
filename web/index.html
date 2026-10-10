@@ -127,12 +127,32 @@
         DYMO printers. The only things it sends over the internet are a version check to GitHub after printing
         (it asks for the newest version number; nothing about your labels)<span id="about-cw"></span>.
         <span id="about-update"></span></p>
+      <h2>Version</h2>
+      <p class="hint" id="ver-state">Asking GitHub for the versions…</p>
+      <div class="row">
+        <label class="hint">Version <select id="ver-pick"></select></label>
+      </div>
+      <ul class="hint" id="ver-notes"></ul>
+      <label class="hint" id="ver-everyone-row" hidden><input type="checkbox" id="ver-everyone"> For <b>every PC</b> — publishes this
+        version's code as the next version (only you, the owner, see this)</label>
+      <div class="row actions">
+        <button class="ghost" type="button" id="ver-use" disabled>Use this version</button>
+        <button class="ghost" type="button" id="ver-newest" hidden>Back to the newest version</button>
+      </div>
+      <p class="hint" id="ver-msg"></p>
       <h2>Tag labels</h2>
       <label class="hint">The roll in the 550 Turbo
         <select id="tag-label">
           <option value="30252">30252 Address · 1⅛″ × 3½″</option>
           <option value="30321">30321 Large Address · 1.4″ × 3½″</option>
         </select></label>
+      <p class="hint" id="roll-auto"></p>
+      <h2>Printers on the network</h2>
+      <p class="hint">LabelDesk looks for the DYMO printers by itself when it starts and every few minutes: it sets up a
+        printer it finds for the first time and follows one whose address changed. Other DYMO printers it finds are listed
+        here to choose from.</p>
+      <ul class="checks" id="net-printers"></ul>
+      <div class="row actions"><button class="ghost" type="button" id="net-scan">Look again</button></div>
       <h2>Tag logo</h2>
       <p class="hint" id="logo-state"></p>
       <p class="hint">Your shop's logo, bottom right of the built-in tag (PNG or JPEG; black and white prints best). It's

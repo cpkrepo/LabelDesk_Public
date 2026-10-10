@@ -1,0 +1,21 @@
+name: Something's wrong
+description: A label prints wrong, LabelDesk shows an error, or something stopped working
+title: "Problem: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: Include the message LabelDesk showed. Never paste customer names, addresses or real labels — this repo is public.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: LabelDesk version (Settings, top)
+  - type: dropdown
+    id: where
+    attributes:
+      label: Which computer?
+      options: [Windows, Mac, Fedora]

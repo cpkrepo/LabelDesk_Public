@@ -62,13 +62,16 @@
       the same lw550t/lw5xl PPDs (CI uses 1.4.3.103, the newest downloadable by URL).
 
 ## Roadmap (2026-10-10 review: as good as DYMO Connect, then better) — pick one, ship it, tick it
-Building now (0.9.0): **1** and **2**.
-- [ ] 1. **Printers found automatically** at startup + every few minutes (Bonjour): a printer's new IP → its queue is
+**1** and **2** built in 0.9.0 (CI + fakes on Fedora and macOS); still to check against the shop's REAL printers.
+- [~] 1. **Printers found automatically** (0.9.0; real printers: do they announce _pdl-datastream on Bonjour?) at startup + every few minutes (Bonjour): a printer's new IP → its queue is
       re-pointed silently; a missing 550 Turbo / 5XL queue → added (Fedora/Mac; Windows: one **Add** button, needs admin);
       an extra/unknown DYMO → a banner asks, never added silently.
-- [ ] 2. **Loaded roll from the printer** (550 series NFC, status bytes 11–22 SKU, 27–28 labels left; ESC U = size in mm):
+- [~] 2. **Loaded roll from the printer** (0.9.0; real printers: `tools/dymo-status.py <ip>` — SKU text + count as documented?) (550 series NFC, status bytes 11–22 SKU, 27–28 labels left; ESC U = size in mm):
       pick 30252/30321 automatically, warn before printing on the wrong roll, labels remaining + low warning.
-- [ ] 3. More barcodes: **QR** (e.g. the ConnectWise ticket link), Code 39, UPC — next to Code 128.
+- [ ] 3. More barcodes: Code 39, UPC next to Code 128; **QR only for phones** (customers), see note below.
+      **Shop scanner = 1D barcode scanner only (no QR reader, 2026-10-10):** everything a technician scans (ticket #,
+      asset #, serial) must be Code 128. QR is for customers' phones only (support link on deployment tags). A 2D
+      scanner (reads both) is a cheap upgrade if QR is ever wanted in-house.
 - [ ] 4. **Label designer**: any DYMO size; text/barcode/QR/image/shape objects; templates shared via the repo (no work data).
 - [ ] 5. **Spreadsheet batch**: CSV/Excel in, one label per row, field mapping.
 - [ ] 6. **Signed Windows installer** (no SmartScreen "unknown publisher").
@@ -81,15 +84,16 @@ Building now (0.9.0): **1** and **2**.
 ## MSP ideas: asset tags for drop-off repairs and customer deployments (brainstorm, 2026-10-10)
 Intake (PC dropped off for repair):
 - [ ] **Intake tag preset**: ticket # · customer/company · received date · **serial** · **bin/shelf** · QR/Code 128 of the
-      ticket. A USB barcode scanner reads the serial sticker on the laptop straight into the Serial field.
+      ticket (Code 128 — the shop's scanner is 1D). A USB barcode scanner reads the serial sticker on the laptop straight into the Serial field.
 - [ ] **"1 of 3" accessory tags** with the same ticket # (charger, dock, bag) — one click prints the set.
-- [ ] **Customer claim label/receipt** on the 5XL: ticket #, what was left (device, accessories, password given?), pickup QR.
+- [ ] **Customer claim label/receipt** on the 5XL: ticket #, what was left (device, accessories, password given?), ticket #
+      as Code 128 for the pickup scan.
 - [ ] **Been here before?** ConnectWise configuration lookup by serial (read-only) → previous tickets for this device.
 - [ ] **Bench scan**: scanning a tag in LabelDesk opens the ticket (ConnectWise link) and the tag's history; pickup scan marks
       it collected in History.
 Deployment (PC set up for a customer):
 - [ ] **Deployment tag preset**: customer company/logo · asset # · serial · model · "Property of …" · **support QR** ("Need
-      help? Scan") → the customer's portal / support email with the asset # filled in — the tag becomes the way users
+      help? Scan" — customers' phones read QR; the shop scanner reads the Code 128 asset # next to it) → the customer's portal / support email with the asset # filled in — the tag becomes the way users
       ask for help. Durable (polyester) roll for deployments, paper for intake — roll detection (2) warns on a mix-up.
 - [ ] **Asset numbers without duplicates across technicians**: use the ConnectWise configuration ID (looked up by serial)
       or a per-customer prefix + serial — no shared counter to collide.
