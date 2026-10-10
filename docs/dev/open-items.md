@@ -20,7 +20,7 @@
       reservations in the router.
 - [ ] Print dialog: in Firefox/Chrome, print a carrier label page to "Shipping Label (LabelDesk)" → opens in LabelDesk.
 - [ ] ConnectWise: the ConnectWise admin creates the role/API member/Client ID (docs/connectwise-setup.md); Test connection; check a
-      residential ticket (company may be a catch-all — is the contact the better "company" there?).
+      residential ticket (owner 2026-10-10: a home customer's name is the company; the contact only follows a business).
 - [x] Windows 11 build — tested 2026-09-30 in the Windows 11 VM with DYMO Connect 1.5.1.20 drivers + fake LabelWriter:
       install, ConnectWise (fake), tag + UPS 4×6 print (decoded output correct), Downloads pickup, History, Settings.
 - [ ] Rollout: share installs by link (email template: docs/install-email.txt). Gmail blocks the zips as attachments.

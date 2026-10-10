@@ -23,6 +23,7 @@ setTimeout(async () => {
   out.tag = tag(f("Acme Dental Group", false));
   out.long_bar = tag(f("Jonathan Worthington-Smythe Orthodontics", true));
   out.contact_bar = tag({ ...f("Acme Dental Group", true), contact: "Jane Smith" });
+  out.home_bar = tag({ ...f("Jane Smith", true), contact: "Jane Smith" });                 // a home customer: name once
   out.offset_bar = tag(f("Acme Dental Group", true), 1.0);                    // text position +1 mm: everything moves down
   const tpl = parseDymo(DYMO, "harness.dymo"); await templateImagesReady(tpl);
   out.template_images = tpl.objects.filter(o => o.kind === "image").length;
