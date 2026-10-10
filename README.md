@@ -17,6 +17,8 @@ network printers. No account, no server, nothing about your labels leaves the PC
 - **Shipping labels** on the LabelWriter **5XL** (4″ × 6″). Paste a screenshot, drop the carrier's PDF, or just
   download it — LabelDesk finds the label on the page, turns it upright, fits it, and checks the barcode scans before it
   prints. Adjust with ↺ ↻ 180° or by dragging a box.
+- **Label designer:** lay out any DYMO label the two printers take — text, fields, barcodes, pictures, lines — and
+  share good layouts with the whole shop.
 - **The preview is exactly what prints** — it's drawn at the printers' own 300 dpi.
 - **Sets the printers up by itself:** finds the DYMO printers on the network, follows them when their address changes,
   and reads the loaded roll — which labels, how many are left — so it never prints on the wrong one.
@@ -39,11 +41,16 @@ prints through DYMO's driver). Pick your computer:
 ### macOS (14 Sonoma or newer)
 1. Install **[DYMO Connect for Mac](https://www.dymo.com/support?cfid=online-support-sw-downloads)** (it installs the
    driver for the 550 Turbo and 5XL). You don't need to add the printers in it.
-2. Open **Terminal** and paste:
+2. Download **`LabelDesk-<version>.pkg`** from the **[latest release](https://github.com/cpkrepo/LabelDesk_Public/releases/latest)**
+   and open it — the first time **right-click → Open** (it isn't signed by Apple; or System Settings → Privacy &
+   Security → Open Anyway). It installs LabelDesk for you and finds the printers by itself. If it asks for Apple's
+   developer tools, click Install in that window and open the package again when it's done.
+
+   Or, in **Terminal**:
    ```bash
    xcode-select --install 2>/dev/null; git clone https://github.com/cpkrepo/LabelDesk_Public.git ~/LabelDesk_Public && cd ~/LabelDesk_Public && tools/install-all.sh
    ```
-   The first command installs Apple's developer tools (git + Python) if they're missing — click **Install** in the
+   (the Terminal way, step by step:) the first command installs Apple's developer tools (git + Python) if they're missing — click **Install** in the
    window that pops up, then paste the line again. `install-all.sh` finds both printers on the network (or asks for
    their IP addresses), asks for your Mac password once to add them, installs the app and runs a health check.
 3. Open **LabelDesk** from Launchpad or Spotlight. It starts by itself when you log in.

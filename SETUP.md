@@ -64,7 +64,10 @@ installs, and runs from a clone of this repo like on Fedora (same `tools/update.
 
 1. Install **DYMO Connect for Mac** from DYMO's download page
    (https://www.dymo.com/support?cfid=online-support-sw-downloads). Adding the printers in it is optional.
-2. In **Terminal**:
+2. **Easiest:** download `LabelDesk-<version>.pkg` from the repo's Releases page and open it (first time: right-click →
+   Open — it isn't signed by Apple). It clones LabelDesk into `~/LabelDesk_Public`, installs the app and the printers set
+   themselves up; if it asks for Apple's developer tools, install them and open the package again. Log:
+   `/tmp/labeldesk-install.log`. **Or** in **Terminal**:
    ```bash
    xcode-select --install          # git + python3 from Apple; click Install, wait, skip if "already installed"
    git clone https://github.com/cpkrepo/LabelDesk_Public.git ~/LabelDesk_Public

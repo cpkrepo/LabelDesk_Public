@@ -7,6 +7,12 @@ installer attached) and any of them can be brought back with `tools/rollback.sh 
 the owner's `tools/update.sh` turns that heading into the version number when it publishes.
 
 ## Unreleased
+- **Label designer** (new Designer tab): any of the 65 DYMO labels the 550 Turbo and 5XL take — text, fields that fill
+  in when printing ({company}, {ticket}, {serial}…), every barcode type, pictures, lines and boxes; drag to place,
+  corner to resize. Save layouts on the PC, make a tag-sized one the inventory tag's layout, export/import (.json or a
+  DYMO .dymo file), or **Share with the shop** — the owner approves it and every PC gets it.
+- **Mac installer package:** every release has a `LabelDesk-<version>.pkg` — open it (right-click → Open the first
+  time; it isn't signed by Apple) and LabelDesk installs itself, no Terminal. Updates work as before.
 - **Been here before?** A serial typed or scanned at intake shows this PC's earlier tickets for that device (and
   whether it was picked up); with ConnectWise on, its configuration too — the company fills in by itself.
 - **Scan a tag** (History): scan a tag's ticket barcode to see every tag printed for it (device, accessories, serial,
