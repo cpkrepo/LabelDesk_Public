@@ -49,6 +49,13 @@ jobs:
           lpstat -v
           /usr/bin/python3 tests/print_check.py /tmp/ld-tag /tmp/ld-ship
           tools/doctor.sh
+      - name: Bonjour diagnostics
+        if: always()
+        run: |
+          cd server && /usr/bin/python3 -c 'import dymo; print("browse from the shell:", dymo.browse(3), dymo.LAST)' || true
+          curl -s http://127.0.0.1:8792/api/printers | /usr/bin/python3 -c 'import json,sys; print("LabelDesk (LaunchAgent) network:", json.load(sys.stdin)["network"])' || true
+          perl -e 'alarm 5; exec @ARGV' dns-sd -B _pdl-datastream._tcp local. || true
+          perl -e 'alarm 15; exec @ARGV' lpinfo --include-schemes dnssd -v || true
       - name: Logs
         if: always()
         run: |

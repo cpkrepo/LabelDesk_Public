@@ -814,7 +814,8 @@ def printers():
             out[kind]["roll"] = None
         out[kind]["expect"] = expected_stock(kind)
     out["network"] = {"found": AUTO.found, "offers": AUTO.offers, "scannedAt": AUTO.at, "scanning": AUTO.scanning,
-                      "auto": auto, "canManage": AUTO.can_manage}
+                      "auto": auto, "canManage": AUTO.can_manage,
+                      "error": dymo.LAST.get("error")}
     return out
 
 

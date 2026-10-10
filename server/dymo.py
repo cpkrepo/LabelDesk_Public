@@ -189,9 +189,12 @@ def collect(records):
     return list(found.values())
 
 
+LAST = {"error": None}                                           # why the last browse found nothing (shown in Settings)
+
+
 def browse(seconds=3.0):
     """Ask the network which DYMO printers are there. → [{name, model, ip, port, host}]. Never raises."""
-    records = []
+    records, LAST["error"] = [], None
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 255)
@@ -212,6 +215,6 @@ def browse(seconds=3.0):
             except (ValueError, IndexError, struct.error):
                 continue
         s.close()
-    except OSError:
-        pass
+    except OSError as e:                                         # e.g. macOS Local Network privacy: "No route to host"
+        LAST["error"] = f"{e.strerror or e}"
     return collect(records)
