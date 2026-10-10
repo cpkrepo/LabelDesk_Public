@@ -449,6 +449,18 @@ $("#free-text").addEventListener("keydown", e => {
 });
 $("#flip").onchange = e => { try { localStorage.setItem("flipTag", e.target.checked); } catch {} drawTagPreview(); };
 form.addEventListener("input", () => drawTagPreview());
+// a device's tags: the device tag ("1 of N" when it has accessories) + one per accessory, same ticket # and barcode.
+// wait = follow every tag until printed (batches: a problem stops at that tag) → true when all went out
+async function printTagSet(f, acc, copies = 1, { wait = false, force = false } = {}) {
+  const n = acc.length + 1;
+  const device = acc.length ? { ...f, part: `1 of ${n}`, accessories: acc } : f;
+  let ok = await printCanvas("tag", await tagCanvas(device), copies, device, tagWhat(device), { wait: wait || acc.length > 0, force });
+  for (let i = 0; ok && i < acc.length; i++) {
+    const a = { ...f, serial: "", item: acc[i], part: `${i + 2} of ${n}` };
+    ok = await printCanvas("tag", await tagCanvas(a), 1, a, `${tagWhat(a)} · ${acc[i]}`, { wait: wait || i < acc.length - 1, force });
+  }
+  return ok;
+}
 const tagWhat = f => f.free != null ? `blank tag “${f.free.split("\n")[0].slice(0, 40)}”` : `${f.customer} · #${f.ticket}`;
 // the print image for a tag (imported templates' pictures have to be decoded before drawing)
 async function tagCanvas(f) {
@@ -461,14 +473,8 @@ form.onsubmit = async e => {
   if (cwPending) { await cwPending; cwPending = null; }
   const f = tagFields();
   if (!f.customer || !f.ticket) return toast("Customer and ticket # are needed", true);
-  const acc = accessories(), n = acc.length + 1;
-  const device = acc.length ? { ...f, part: `1 of ${n}`, accessories: acc } : f;
-  let ok = await printCanvas("tag", await tagCanvas(device), +form.copies.value || 1, device, tagWhat(device), { wait: acc.length > 0 });
-  for (let i = 0; ok && i < acc.length; i++) {                 // one tag per accessory, same ticket # and barcode
-    const a = { ...f, serial: "", item: acc[i], part: `${i + 2} of ${n}` };
-    ok = await printCanvas("tag", await tagCanvas(a), 1, a, `${tagWhat(a)} · ${acc[i]}`, { wait: i < acc.length - 1 });
-  }
-  if (ok) {
+  const device = { ...f, ...(accessories().length ? { part: `1 of ${accessories().length + 1}`, accessories: accessories() } : {}) };
+  if (await printTagSet(f, accessories(), +form.copies.value || 1)) {
     try { localStorage.setItem("lastTag", JSON.stringify(device)); } catch {}
     form.customer.value = form.ticket.value = form.contact.value = form.serial.value = form.bin.value = form.accessories.value = "";
     cwAuto = { customer: "", contact: "" }; cwInfo(""); cwSeq++;
@@ -1041,3 +1047,72 @@ $$("#acc-chips .chip").forEach(b => b.onclick = () => {
   form.accessories.value = list.join(", "); drawTagPreview();
 });
 ["serial", "bin", "accessories"].forEach(n => form[n].addEventListener("input", () => drawTagPreview()));
+
+// ---- Batch → Open spreadsheet (Excel .xlsx or CSV, read by the server: server/sheet.py) → map columns → one tag set per row
+const SHEET_FIELDS = [["ticket", "Ticket #", /ticket|tkt|job|ref/i], ["customer", "Company", /company|client|business|account|organi[sz]ation|customer$/i],
+  ["contact", "Customer name", /contact|person|owner|customer name|^name$/i], ["received", "Date received", /date|received|in$/i],
+  ["serial", "Serial #", /serial|s\/n|\bsn\b|service tag/i], ["bin", "Shelf / bin", /bin|shelf|location|slot/i],
+  ["accessories", "Accessories", /accessor|items?|included|with/i]];
+let SHEET = null;
+function sheetDate(v) {                                       // 2026-10-09 · 10/09/2026 · 10/9/26 → ISO; else the form's date
+  const s = String(v || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
+  if (m) return `${m[3].length === 2 ? "20" + m[3] : m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+  return form.received.value;
+}
+function sheetRows() {
+  const pick = {};
+  $$("#sheet-map select").forEach(sel => { pick[sel.dataset.field] = sel.value === "" ? -1 : +sel.value; });
+  const cell = (r, k) => (pick[k] >= 0 ? (r[pick[k]] || "").trim() : "");
+  return SHEET.rows.map(r => ({
+    f: { ticket: cell(r, "ticket").replace(/^#/, ""), customer: cell(r, "customer"), received: sheetDate(cell(r, "received")),
+         contact: cell(r, "contact"), serial: cell(r, "serial"), bin: cell(r, "bin"), barcode: form.barcode.checked },
+    acc: cell(r, "accessories").split(/[,;]/).map(x => x.trim()).filter(Boolean),
+  })).filter(x => x.f.ticket && x.f.customer);
+}
+function showSheet() {
+  const used = new Set();
+  $("#sheet-map").innerHTML = SHEET_FIELDS.map(([k, label, rx]) => {
+    let guess = SHEET.columns.findIndex((c, i) => !used.has(i) && rx.test(c));
+    if (k === "customer" && guess < 0) guess = SHEET.columns.findIndex((c, i) => !used.has(i) && /name/i.test(c));
+    if (guess >= 0) used.add(guess);
+    return `<label class="hint">${label}<select data-field="${k}"><option value="">— not in the sheet —</option>${
+      SHEET.columns.map((c, i) => `<option value="${i}" ${i === guess ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></label>`;
+  }).join("");
+  $$("#sheet-map select").forEach(s => s.onchange = previewSheet);
+  previewSheet();
+  $("#sheet").hidden = false;
+}
+function previewSheet() {
+  const rows = sheetRows(), tags = rows.reduce((n, r) => n + 1 + r.acc.length, 0);
+  $("#sheet-preview").innerHTML = `<tr><th>Ticket #</th><th>Company</th><th>Customer</th><th>Received</th><th>Serial #</th><th>Bin</th><th>Accessories</th></tr>` +
+    rows.slice(0, 50).map(({ f, acc }) => `<tr><td>${esc(f.ticket)}</td><td>${esc(f.customer)}</td><td>${esc(f.contact)}</td><td>${esc(usDate(f.received))}</td>` +
+      `<td>${esc(f.serial)}</td><td>${esc(f.bin)}</td><td>${esc(acc.join(", "))}</td></tr>`).join("");
+  $("#sheet-print").textContent = `Print ${tags} tag${tags === 1 ? "" : "s"} (${rows.length} device${rows.length === 1 ? "" : "s"})`;
+  $("#sheet-print").disabled = !rows.length;
+}
+$("#sheet-open").onclick = () => $("#sheet-file").click();
+$("#sheet-file").onchange = async e => {
+  const file = e.target.files[0]; e.target.value = "";
+  if (!file) return;
+  try {
+    const bin = new Uint8Array(await file.arrayBuffer());
+    let b64 = ""; for (let i = 0; i < bin.length; i += 0x8000) b64 += String.fromCharCode.apply(null, bin.subarray(i, i + 0x8000));
+    SHEET = await api("sheet", { name: file.name, data: btoa(b64) });
+    $("#sheet-name").textContent = `${file.name} · ${SHEET.rows.length} rows${SHEET.truncated ? " (first 2000)" : ""}`;
+    showSheet();
+  } catch (err) { toast(err.message, true); }
+};
+$("#sheet-close").onclick = () => { $("#sheet").hidden = true; SHEET = null; };
+$("#sheet-print").onclick = async () => {
+  const rows = sheetRows(), st = $("#batch-status");
+  if (rows.length > 10 && !confirm(`Print tags for ${rows.length} devices?`)) return;
+  for (const [i, { f, acc }] of rows.entries()) {
+    st.textContent = `Printing ${i + 1} of ${rows.length} devices…`;
+    if (!await printTagSet(f, acc, 1, { wait: true, force: true })) {
+      st.textContent = `Stopped at row ${i + 1} (#${f.ticket}, ${f.customer}) — the rows after it weren't printed.`; return;
+    }
+  }
+  st.textContent = ""; loadCustomers(); jobbar(`✓ Printed tags for all ${rows.length} devices`, "ok");
+};

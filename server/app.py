@@ -38,6 +38,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import autoprint
 import barcode
+import sheet
 import connectwise
 import dymo
 import keys
@@ -1211,6 +1212,8 @@ class Handler(BaseHTTPRequestHandler):
                 _cw_check.clear()
                 keys.clear()
                 return self.send_json(cw_status())
+            if path == "/api/sheet":                         # Batch → Open spreadsheet: {name, data: base64} → columns + rows
+                return self.send_json(sheet.read(str(b.get("name") or ""), base64.b64decode(b.get("data") or "", validate=True)))
             if path == "/api/settings/auto-ship":            # Settings → Shipping labels print by themselves: {on}
                 save_config(auto_ship=bool(b.get("on")))
                 return self.send_json({"ok": True})

@@ -22,6 +22,8 @@ nav button.on { background: var(--bg); color: var(--ink); font-weight: 600; }
 .printers span::before { content: "●"; margin-right: 5px; color: var(--bad); }
 .printers span.ok::before { color: var(--ok); }
 .printers span.ok.low::before { color: #d08700; }
+.sheet-map { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; margin-bottom: 10px; }
+.sheet-map select { width: 100%; } .tablewrap { overflow-x: auto; max-height: 260px; } #sheet-preview td, #sheet-preview th { white-space: nowrap; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 10px; }
 .chip { border: 1px solid var(--line, #ccc); background: none; border-radius: 999px; padding: 2px 10px; font: inherit; font-size: 13px; cursor: pointer; }
 label.bin { max-width: 11em; }

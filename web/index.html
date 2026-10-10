@@ -90,7 +90,19 @@
     <div id="tag-batch" class="card" hidden>
       <h2>Batch <small>one device per line: <code>Customer, Ticket #</code> — all with the date above</small></h2>
       <textarea id="batch-text" rows="8" placeholder="Acme Dental, 75013&#10;Jane Smith, 75014"></textarea>
-      <div class="row actions"><button class="primary" id="batch-print">Print all</button><span id="batch-status" class="hint"></span></div>
+      <div class="row actions"><button class="primary" id="batch-print">Print all</button>
+        <button type="button" class="ghost" id="sheet-open">Open spreadsheet… <small>(Excel or CSV)</small></button>
+        <input type="file" id="sheet-file" accept=".xlsx,.csv,.txt,.xls" hidden>
+        <span id="batch-status" class="hint"></span></div>
+      <div id="sheet" hidden>
+        <h2>Spreadsheet <small id="sheet-name"></small></h2>
+        <p class="hint">Which column goes where (guessed from the headings — change any). One tag per row; a row's
+          accessories get their own tags. Rows without a ticket # or company are skipped.</p>
+        <div class="sheet-map" id="sheet-map"></div>
+        <div class="tablewrap"><table id="sheet-preview"></table></div>
+        <div class="row actions"><button class="primary" type="button" id="sheet-print">Print</button>
+          <button class="ghost" type="button" id="sheet-close">Close</button></div>
+      </div>
     </div>
   </section>
 

@@ -3,7 +3,8 @@
 // 1. pdf.js opens the sample and reads its text          (pdfPage — a PDF that won't open breaks the Shipping tab)
 // 2. the same PDF saved to Downloads opens by itself on the Shipping tab, label found  (inbox → dataBlob → loadShip)
 // 3. hands-free shipping counts down and can be cancelled
-// 4. no uncaught errors or inbox warnings on the page
+// 4. Batch → Open spreadsheet (a real .xlsx) maps the columns
+// 5. no uncaught errors or inbox warnings on the page
 import { copyFileSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
@@ -76,6 +77,25 @@ await sleep(1500);
 bar = await run(`document.querySelector("#jobbar .msg")?.textContent || ""`).catch(() => "");
 check(/Cancelled/.test(bar), "Cancel stops it", bar.slice(0, 60));
 await run(`(() => { const c = document.getElementById("auto-ship"); if (c.checked) c.click(); return true; })()`);
+// 5. Batch → Open spreadsheet: the real .xlsx sample through the file picker → columns guessed → 3 devices, 6 tags
+await run(`(() => { document.querySelector('[data-tab="tag"], nav button')?.click(); document.getElementById("tag-batch").hidden = false; return true; })()`);
+const doc = await send("DOM.getDocument", { depth: -1 });
+const inp = await send("DOM.querySelector", { nodeId: doc.result.root.nodeId, selector: "#sheet-file" });
+await send("DOM.setFileInputFiles", { nodeId: inp.result.nodeId, files: [new URL("../samples/intake.xlsx", import.meta.url).pathname] });
+await run(`(() => { document.getElementById("sheet-file").dispatchEvent(new Event("change")); return true; })()`);
+let sheetState = null;
+for (let i = 0; i < 20; i++) {
+  await sleep(300);
+  sheetState = await run(`(() => ({ shown: !document.getElementById("sheet").hidden, button: document.getElementById("sheet-print").textContent,
+    rows: document.querySelectorAll("#sheet-preview tr").length - 1,
+    map: [...document.querySelectorAll("#sheet-map select")].map(s => s.dataset.field + "=" + (s.selectedOptions[0]?.textContent || "")).join(", "),
+    first: document.querySelector("#sheet-preview tr:nth-child(2)")?.textContent || "" }))()`).catch(() => null);
+  if (sheetState?.shown) break;
+}
+check(sheetState?.shown && sheetState.rows === 3 && /Print 6 tags \(3 devices\)/.test(sheetState.button),
+      "an Excel sheet opens in Batch with its columns mapped", `${sheetState?.button} · ${sheetState?.map}`);
+check(/75013.*Acme Dental Group.*Jane Smith.*10\/09\/2026.*PF3XK2LQ.*B3.*Charger, Bag/.test(sheetState?.first || ""),
+      "the first row is read right (date, serial, accessories)", (sheetState?.first || "").slice(0, 90));
 check(!problems.length, "no errors on the page", problems.join(" | ").slice(0, 300));
 
 ws.close();

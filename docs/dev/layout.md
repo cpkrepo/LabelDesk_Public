@@ -16,6 +16,8 @@ server/dymo.py       straight to the printers (stdlib): Bonjour browse (mDNS leg
 server/autoprint.py  printers set themselves up: scan at start + every 5 min → add missing queue / re-point a moved printer
                      (only when unambiguous; else offers), events for the page, the roll per printer (cached 30 s, never
                      while busy); app.py QueueOps = lpstat/lpadmin; roll_check() stops prints on the wrong/empty roll (422)
+server/sheet.py      Batch → Open spreadsheet: CSV (sniffed delimiter, BOM, cp1252) + .xlsx (zip/XML, first sheet, date formats →
+                     ISO), stdlib; POST /api/sheet. Sample: tests/samples/intake.xlsx (LibreOffice-made, made-up data)
 server/ipp.py        minimal IPP client for local CUPS (job + printer state) and DYMO reasons → plain English
 server/barcode.py    zbarimg on the print image: UPS 1Z…, FedEx 34-digit (last 12 = tracking #), USPS
 server/inbox.py      watches Downloads (new carrier PDFs only) + /var/spool/labeldesk (the print-dialog printer)
