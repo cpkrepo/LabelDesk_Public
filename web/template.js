@@ -154,6 +154,14 @@ export function drawTemplate(ctx, tpl, f, DW, DH, { drawBarcode, usDate }) {
       ctx.drawImage(e.bw, dx, y + (h - dh) / 2, dw, dh);
       continue;
     }
+    if (o.kind === "shape") {                                              // designer: line / box / filled box
+      const t = Math.max(1, Math.round((o.stroke || 0.02) * DPI * s));
+      if (o.shape === "fill") ctx.fillRect(x, y, w, h);
+      else if (o.shape === "box") { ctx.lineWidth = t; ctx.strokeRect(x + t / 2, y + t / 2, w - t, h - t); }
+      else if (w >= h) ctx.fillRect(x, y + (h - t) / 2, w, t);                // a line: across the longer side of its box
+      else ctx.fillRect(x + (w - t) / 2, y, t, h);
+      continue;
+    }
     if (o.kind === "barcode") {
       const data = fill(o.format).trim();
       if (data) drawBarcode(ctx, data, x, y, w, h, symbologyOf(o.symbology));

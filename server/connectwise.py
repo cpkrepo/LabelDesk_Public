@@ -109,6 +109,21 @@ def ticket(creds, number):
     return res
 
 
+def device(creds, serial):
+    """Configurations with this serial number, any company (read-only): [{id, name, type, serial, model, manufacturer,
+    company, companyId}] — "been here before?" for a device that's dropped off."""
+    s = str(serial).strip()
+    if not s or not all(c.isalnum() or c in "-_./ " for c in s) or len(s) > 60:
+        return []
+    rows = _get(creds, "company/configurations", {
+        "conditions": f'serialNumber="{s}"', "pageSize": 10,
+        "fields": "id,name,type/name,serialNumber,modelNumber,manufacturer/name,company/id,company/name"})
+    return [{"id": c.get("id"), "name": c.get("name", ""), "type": (c.get("type") or {}).get("name", ""),
+             "serial": c.get("serialNumber") or "", "model": c.get("modelNumber") or "",
+             "manufacturer": (c.get("manufacturer") or {}).get("name", ""),
+             "company": (c.get("company") or {}).get("name", ""), "companyId": (c.get("company") or {}).get("id")} for c in rows]
+
+
 def configurations(creds, company_id, ticket_no=None):
     """The company's configurations (Configurations tab), the ticket's own ones first. [{id, name, type, serial,
     model, manufacturer, onTicket}]"""

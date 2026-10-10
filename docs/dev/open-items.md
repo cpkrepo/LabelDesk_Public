@@ -67,19 +67,20 @@
 fine), 8 scanner-first auto-print, the customer claim receipt, and all deployment/lifecycle items (don't fit the
 shop's workflow). 11 = an UNSIGNED .pkg (no Apple Developer account).
 **1** and **2** built in 0.9.0 (CI + fakes on Fedora and macOS); still to check against the shop's REAL printers.
-- [~] 1. **Printers found automatically** (0.9.0: works on Fedora. **macOS: blocked** — Local Network privacy gives a
-      LaunchAgent "No route to host" for multicast (CI 2026-10-10); options: browse via CUPS (`lpinfo --include-schemes dnssd`,
-      cupsd is exempt; queues by dnssd URI) or run as an app bundle granted Local Network. **Windows: untested** (VM has no
-      multicast; firewall may drop replies) — maybe Windows' DnsServiceBrowse API. Real printers: do they announce _pdl-datastream?) at startup + every few minutes (Bonjour): a printer's new IP → its queue is
-      re-pointed silently; a missing 550 Turbo / 5XL queue → added (Fedora/Mac; Windows: one **Add** button, needs admin);
-      an extra/unknown DYMO → a banner asks, never added silently.
+- [~] 1. **Printers found automatically** — Fedora: own mDNS scan (IPs → rolls). **Mac: through CUPS** (`lpinfo --include-
+      schemes dnssd`; macOS Local Network privacy blocks the LaunchAgent's own scan — "No route to host", CI 2026-10-10);
+      queues by dnssd:// URI, so no rolls on the Mac unless a queue has an IP. **Windows: system DNS-SD** (server/winmdns.py,
+      DnsServiceBrowse/Resolve, checked on the Win11 VM with announced fakes: found, rolls read); offers only (UAC).
+      Open: Windows shows the shop's DYMO Connect printers' matches as "extra" (the Windows port's IP isn't read yet);
+      real printers: do they announce _pdl-datastream on Bonjour?
 - [~] 2. **Loaded roll from the printer** (0.9.0; real printers: `tools/dymo-status.py <ip>` — SKU text + count as documented?) (550 series NFC, status bytes 11–22 SKU, 27–28 labels left; ESC U = size in mm):
       pick 30252/30321 automatically, warn before printing on the wrong roll, labels remaining + low warning.
 - [ ] 3. More barcodes: Code 39, UPC next to Code 128; **QR only for phones** (customers), see note below.
       **Shop scanner = 1D barcode scanner only (no QR reader, 2026-10-10):** everything a technician scans (ticket #,
       asset #, serial) must be Code 128. QR is for customers' phones only (support link on deployment tags). A 2D
       scanner (reads both) is a cheap upgrade if QR is ever wanted in-house.
-- [ ] 4. **Label designer**: any DYMO size; text/barcode/QR/image/shape objects; templates shared via the repo (no work data).
+- [x] 4. **Label designer** (0.10: Designer tab; 30336 printed via CUPS+DYMO driver to the fake, PNG and PDF paths
+      identical; Windows paper by SKU name — untested for non-tag sizes): any DYMO size; text/barcode/QR/image/shape objects; templates shared via the repo (no work data).
 - [ ] 5. **Spreadsheet batch**: CSV/Excel in, one label per row, field mapping.
 - [–] (not wanted) 6. **Signed Windows installer** (no SmartScreen "unknown publisher").
 - [ ] 7. Hands-free shipping (opt-in): a carrier label in Downloads prints itself once its barcode checks out.

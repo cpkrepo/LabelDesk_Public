@@ -38,6 +38,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import autoprint
 import barcode
+import sheet
 import connectwise
 import dymo
 import keys
@@ -105,7 +106,8 @@ LABELS = {
 def config():
     c = {"tag_queue": "Dymo-550-Turbo", "ship_queue": "Dymo-5XL", "bind": "127.0.0.1", "port": 8792, "flip_tag": False, "tag_offset_mm": 0,
          "watch_downloads": True, "update_check": True, "update_url": UPDATE_URL, "tag_logo": "",
-         "tag_label": DEFAULT_TAG_STOCK, "auto_printers": True, "tag_barcode": "code128"}
+         "tag_label": DEFAULT_TAG_STOCK, "auto_printers": True, "tag_barcode": "code128",
+         "auto_ship": False}
     try:
         with open(CONF_FILE) as f:
             c.update(json.load(f))
@@ -143,7 +145,8 @@ def queue_for(kind):
 
 # ------------------------------------------------------------------ history (SQLite)
 LOCK = threading.Lock()
-COLUMNS = {"state": "TEXT", "message": "TEXT", "image": "TEXT", "tracking": "TEXT"}
+COLUMNS = {"state": "TEXT", "message": "TEXT", "image": "TEXT", "tracking": "TEXT",
+           "collected": "TEXT"}                                     # 0.10: picked up (History → Scan a tag), this PC only
 
 
 _schema_ok = []
@@ -173,7 +176,7 @@ def row(hid):
     return dict(r) if r else None
 
 
-def history(limit=80, q="", kind="", since="", until="", before=0):
+def history(limit=80, q="", kind="", since="", until="", before=0, ticket="", serial=""):
     """Printed labels, newest first, searched over EVERYTHING ever printed on this PC: q matches any field (customer,
     company, ticket, serial, bin, free text…) or the tracking number; kind tag/ship; since/until YYYY-MM-DD (inclusive);
     before = an id, for "Show more"."""
@@ -185,6 +188,10 @@ def history(limit=80, q="", kind="", since="", until="", before=0):
         args += [esc_like(json.dumps(q.strip())[1:-1]), esc_like(q.strip())]
     if kind in ("tag", "ship"):
         where.append("kind = ?"); args.append(kind)
+    for key, val in (("ticket", ticket), ("serial", serial)):          # exact field (as json.dumps wrote it)
+        if val.strip():
+            where.append("fields LIKE ? ESCAPE '\\'")
+            args.append("%" + json.dumps({key: val.strip()})[1:-1].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%")
     if since:
         where.append("at >= ?"); args.append(since)
     if until:
@@ -216,6 +223,45 @@ def history_csv(**filters):
                     f.get("serial", ""), f.get("bin", ""), (f.get("free") or "").replace("\n", " / "), r.get("tracking") or "",
                     r["copies"], {"done": "yes", "failed": "no"}.get(r.get("state"), r.get("state") or "")])
     return "\ufeff" + out.getvalue()                                  # BOM: Excel reads it as UTF-8
+
+
+def device_info(serial):
+    """Been here before? This PC's earlier tags with this serial (+ ConnectWise configurations with it when it's on)."""
+    seen = [r for r in history(limit=20, serial=serial) if r["kind"] == "tag" and (r["fields"].get("serial") or "").lower() == serial.strip().lower()]
+    out = {"serial": serial.strip(), "before": [{"at": r["at"], "ticket": r["fields"].get("ticket", ""), "customer": r["fields"].get("customer", ""),
+                                                 "collected": r.get("collected")} for r in seen], "cw": []}
+    st = cw_status()
+    if st["on"]:
+        try:
+            out["cw"] = connectwise.device(cw_creds(), serial)
+        except (connectwise.CWError, LookupError, OSError) as e:
+            out["cwError"] = str(e)
+    return out
+
+
+def ticket_info(number):
+    """Scan a tag (History): everything printed for this ticket here, picked up or not, + the ConnectWise ticket."""
+    n = str(number).strip().lstrip("#")
+    rows = [r for r in history(limit=200, ticket=n) if r["fields"].get("ticket") == n]
+    out = {"ticket": n, "tags": rows, "collected": next((r["collected"] for r in rows if r.get("collected")), None), "cw": None}
+    if cw_status()["on"]:
+        try:
+            out["cw"] = connectwise.ticket(cw_creds(), n)
+        except LookupError:
+            out["cw"] = None
+        except (connectwise.CWError, OSError) as e:
+            out["cwError"] = str(e)
+    return out
+
+
+def set_collected(number, collected):
+    n = str(number).strip().lstrip("#")
+    c = db()
+    with c:
+        c.execute("UPDATE printed SET collected = ? WHERE kind = 'tag' AND fields LIKE ? ESCAPE '\\'",
+                  (datetime.now().isoformat(timespec="seconds") if collected else None,
+                   "%" + json.dumps({"ticket": n})[1:-1].replace("%", "\\%").replace("_", "\\_") + "%"))
+    c.close()
 
 
 def customers(limit=400):
@@ -260,7 +306,7 @@ def keep_image(hid, png):
 RECENT = {}                          # png hash → time: a second identical print within 3 s is a double press
 
 
-def submit(kind, png_bytes, copies, gray=None):
+def submit(kind, png_bytes, copies, gray=None, lab=None):
     """Hand one label to the printer. Fedora: the PNG through CUPS (lp). Windows: the 8-bit grey image through DYMO's
     Windows driver (winprint). → (queue/printer, job id)."""
     if WINDOWS:
@@ -270,13 +316,15 @@ def submit(kind, png_bytes, copies, gray=None):
                                "or Windows Settings → Printers")
         if not gray:
             raise ValueError("the Windows version needs the label as grey pixels (update LabelDesk)")
-        lab = labels()[kind]
+        designed = lab is not None
+        lab = lab or labels()[kind]
+        sku = lab["stock"].split()[0]
         job, _paper = winprint.submit(printer, kind, gray, copies, f"LabelDesk {lab['name']}",
-                                      paper=(lab["stock"].split()[0],) if kind == "tag" else None)
+                                      paper=(sku,) if (kind == "tag" or designed) and sku[:1].isdigit() else None)
         return printer, job
     if MAC and gray:
-        return lp(kind, label_pdf(labels()[kind], *gray), copies, ".pdf")
-    return lp(kind, png_bytes, copies)
+        return lp(kind, label_pdf(lab or labels()[kind], *gray), copies, ".pdf", lab)
+    return lp(kind, png_bytes, copies, lab=lab)
 
 
 def label_pdf(lab, w, h, gray):
@@ -308,7 +356,7 @@ def label_pdf(lab, w, h, gray):
     return bytes(out)
 
 
-def lp(kind, data, copies, suffix=".png"):
+def lp(kind, data, copies, suffix=".png", lab=None):
     """Send one label (PNG, or the exact-size PDF from label_pdf) to its queue at exactly 300 dpi on the right page
     size. → (queue, job number)."""
     queue = queue_for(kind)
@@ -316,7 +364,7 @@ def lp(kind, data, copies, suffix=".png"):
         f.write(data)
         path = f.name
     try:
-        lab = labels()[kind]
+        lab = lab or labels()[kind]
         opts = ["-o", "ppi=300", "-o", "position=center"] if suffix == ".png" else []
         r = subprocess.run(["lp", "-d", queue, "-n", str(copies), "-t", f"LabelDesk {lab['name']}",
                             "-o", f"PageSize={lab['page']}", *opts, path], capture_output=True, text=True, timeout=30)
@@ -333,18 +381,21 @@ def lp(kind, data, copies, suffix=".png"):
     return queue, m.group(1) if m else ""
 
 
-def print_label(kind, png, copies, fields, force=False, gray=None, client_check=None):
+def print_label(kind, png, copies, fields, force=False, gray=None, client_check=None, stock=None):
+    lab = stock_label(stock) if stock else None                   # the designer: any DYMO label (stocks.json)
+    if lab and ("550T" if kind == "tag" else "5XL") not in lab["printers"]:
+        raise ValueError(f"the {'550 Turbo' if kind == 'tag' else '5XL'} doesn't take {lab['name']} labels")
     digest = hashlib.sha1(png + f"{kind}:{copies}".encode()).hexdigest()
     if not force and time.time() - RECENT.get(digest, 0) < 3:
         return {"duplicate": True, "error": "that label was just sent — press Print again to print another"}, 409
     check = None
-    if kind == "ship":
+    if kind == "ship" and not lab:                                # a designed label on the 5XL isn't a carrier label
         # zbar here (Fedora) double-checks; without it (Windows) the browser's ZXing check stands
         check = barcode.check(png) if barcode.available() else (client_check or {"ok": True, "tracking": None})
         if not check.get("ok") and not force:
             return {"needsForce": True, "check": check, "error": check.get("message", "no barcode could be read")}, 422
     if not force:
-        why = roll_check(kind)
+        why = roll_check(kind, lab["sku"] if lab else None)
         if why:
             return {"needsForce": True, "roll": True, "error": why}, 422
     with LOCK:
@@ -357,7 +408,7 @@ def print_label(kind, png, copies, fields, force=False, gray=None, client_check=
     if kind == "ship":
         update(hid, image=keep_image(hid, png))
     try:
-        queue, job = submit(kind, png, copies, gray)
+        queue, job = submit(kind, png, copies, gray, lab)
     except RuntimeError as e:
         update(hid, state="failed", message=str(e))
         raise
@@ -468,6 +519,67 @@ def check_update(cfg=None, now=None):
         res["error"] = str(e)[:200]
     _update.update(at=now, result=res)
     return res
+
+
+# every DYMO label the 550 / 5XL drivers know (tools/gen-stocks.py → stocks.json) — the designer prints on any of them
+def _load_stocks():
+    try:
+        with open(os.path.join(HERE, "stocks.json")) as f:
+            return {s["id"]: s for s in json.load(f)["stocks"]}
+    except (OSError, ValueError, KeyError):
+        return {}
+
+
+STOCKS = _load_stocks()
+
+
+def stock_label(stock_id):
+    """A stocks.json label in the same shape as LABELS entries (page, inches, printable area). KeyError if unknown."""
+    s = STOCKS[stock_id]
+    w, h = s["size_pt"]
+    return {"name": s["name"], "stock": s["name"], "page": s["page"], "size": s["name"].split(" ", 1)[-1],
+            "width_in": w / 72, "height_in": h / 72, "safe_in": [v / 72 for v in s["area_pt"]], "sku": s["sku"],
+            "printers": s["printers"]}
+
+
+# ---- shop templates: designer layouts shared through the repo (templates/*.json — reviewed like any change)
+TEMPLATES_DIR = os.environ.get("LABELDESK_TEMPLATES") or os.path.join(ROOT, "templates")
+
+
+def shared_templates():
+    out = []
+    try:
+        names = sorted(n for n in os.listdir(TEMPLATES_DIR) if n.endswith(".json"))
+    except OSError:
+        return out
+    for n in names:
+        try:
+            with open(os.path.join(TEMPLATES_DIR, n), encoding="utf-8") as f:
+                t = json.load(f)
+            if isinstance(t, dict) and isinstance(t.get("objects"), list):
+                out.append({**t, "id": "shop:" + n[:-5], "shared": True})
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+def share_template(t):
+    """Settings-free sharing: write the layout into the checkout's templates/ — tools/update.sh then sends it to the owner
+    as a pull request (Fedora/Mac). Pictures are refused: the repo is public (logos stay per PC)."""
+    if WINDOWS or not os.path.isdir(os.path.join(ROOT, ".git")):
+        raise ValueError("sharing needs a Fedora or Mac PC with LabelDesk from GitHub — use Export and send the file instead")
+    if not isinstance(t, dict) or not isinstance(t.get("objects"), list) or not str(t.get("name") or "").strip():
+        raise ValueError("send a template with a name")
+    if any(o.get("kind") == "image" for o in t["objects"]):
+        raise ValueError("templates with pictures can't be shared — the repo is public (logos stay on each PC). Remove the picture first")
+    slug = re.sub(r"[^a-z0-9]+", "-", t["name"].strip().lower()).strip("-")[:60] or "template"
+    keep = {k: t[k] for k in ("name", "stock", "orientation", "rect", "objects", "flip") if k in t}
+    os.makedirs(TEMPLATES_DIR, exist_ok=True)
+    path = os.path.join(TEMPLATES_DIR, slug + ".json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(keep, f, indent=1, ensure_ascii=False)
+        f.write("\n")
+    return os.path.relpath(path, ROOT)
 
 
 def labels(cfg=None):
@@ -778,14 +890,14 @@ class QueueOps:
                 return m
         raise RuntimeError("DYMO's driver isn't installed (" + ("DYMO Connect for Mac" if MAC else "tools/install-driver.sh") + ")")
 
-    def add(self, kind, q, ip, port, model):
+    def add(self, kind, q, uri, model):
         lab = labels()[kind]
         desc = f"DYMO {autoprint.MODEL_NAME[model]} ({'inventory tags' if kind == 'tag' else 'shipping'})"
-        self._lpadmin(["-p", q, "-E", "-v", f"socket://{ip}:{port}", "-m", self.ppd(model), "-D", desc,
+        self._lpadmin(["-p", q, "-E", "-v", uri, "-m", self.ppd(model), "-D", desc,
                        "-o", f"PageSize={lab['page']}", "-o", "printer-error-policy=abort-job"])
 
-    def repoint(self, q, ip, port):
-        self._lpadmin(["-p", q, "-v", f"socket://{ip}:{port}"])
+    def repoint(self, q, uri):
+        self._lpadmin(["-p", q, "-v", uri])
 
     def _lpadmin(self, args):
         r = subprocess.run(["lpadmin", *args], capture_output=True, text=True, timeout=30)
@@ -813,7 +925,21 @@ class QueueOps:
             return False
 
 
-AUTO = autoprint.Auto(QueueOps(), can_manage=not WINDOWS)
+def _browse():
+    """LabelDesk's own Bonjour scan (gives IPs → rolls) on Fedora; the Mac asks CUPS (macOS blocks the LaunchAgent's own
+    scan); Windows asks the system's DNS-SD (winmdns.py) — its firewall would drop replies to LabelDesk's own scan."""
+    if MAC:
+        return dymo.browse_cups()
+    if WINDOWS:                                    # the system's DNS-SD (its own firewall rules; no prompt for LabelDesk)
+        import winmdns
+        return winmdns.browse()
+    found = dymo.browse()
+    if not found and dymo.LAST.get("error") and not WINDOWS:
+        return dymo.browse_cups()
+    return found
+
+
+AUTO = autoprint.Auto(QueueOps(), browse=_browse, can_manage=not WINDOWS)
 
 
 def heal_once():
@@ -853,7 +979,7 @@ def expected_stock(kind, cfg=None):
     return labels(cfg)[kind]["stock"].split()[0]
 
 
-def roll_check(kind):
+def roll_check(kind, want=None):
     """None, or why this label shouldn't print right now (wrong roll / no labels) — the page offers Print anyway."""
     if not config().get("auto_printers", True):
         return None
@@ -866,7 +992,7 @@ def roll_check(kind):
     printer = "550 Turbo" if kind == "tag" else "5XL"
     if not r["canPrint"]:
         return f"the {printer} says {r['media']}"
-    want = expected_stock(kind)
+    want = want or expected_stock(kind)
     if r["stock"] and r["stock"] != want:
         return (f"the {printer} has {r['name']} labels loaded, but LabelDesk is set to print {dymo.describe_roll(want) or want}"
                 + (" — change it in Settings → Tag labels" if kind == "tag" else ""))
@@ -889,23 +1015,26 @@ def printers():
     return out
 
 
-def use_printer(kind, ip):
-    """Settings → Printers on the network → Use for tags / shipping: point this kind's queue at that printer."""
+def use_printer(kind, k):
+    """Settings → Printers on the network → Use for tags / shipping: point this kind's queue at that printer (k = its
+    key: IP or CUPS URI, autoprint.key)."""
     if kind not in ("tag", "ship"):
         raise ValueError("kind must be tag or ship")
-    p = next((p for p in AUTO.found if p["ip"] == ip), None)
+    p = next((p for p in AUTO.found if autoprint.key(p) == k), None)
     if not p:
         raise ValueError("that printer isn't on the network any more — Look again")
     if WINDOWS:
-        return windows_add_dymo("5XL" if p["model"] == "5XL" else "550", ip)
+        if not p.get("ip"):
+            raise ValueError("no address for that printer — add it in DYMO Connect")
+        return windows_add_dymo("5XL" if p["model"] == "5XL" else "550", p["ip"])
     ops, q = AUTO.ops, queue_for(kind)
     if ops.uri(q) is None:
-        ops.add(kind, q, ip, p["port"], p["model"])
+        ops.add(kind, q, autoprint.device_uri(p), p["model"])
     else:
-        ops.repoint(q, ip, p["port"])
+        ops.repoint(q, autoprint.device_uri(p))
     AUTO.forget_roll(kind)
-    AUTO.event(f"{'Tags' if kind == 'tag' else 'Shipping labels'} now print on the {autoprint.MODEL_NAME[p['model']]} at {ip}.")
-    AUTO.offers = [o for o in AUTO.offers if o["ip"] != ip]
+    AUTO.event(f"{'Tags' if kind == 'tag' else 'Shipping labels'} now print on the {autoprint.MODEL_NAME[p['model']]}{autoprint.where(p)}.")
+    AUTO.offers = [o for o in AUTO.offers if autoprint.key(o) != k]
 
 
 def _printers():
@@ -1068,6 +1197,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"version": VERSION, "labels": labels(cfg), "tagStocks": TAG_STOCKS,
                                        "tagLabel": labels(cfg)["tag"]["stock"].split()[0], "flipTag": cfg["flip_tag"], "tagOffsetMm": float(cfg.get("tag_offset_mm") or 0),
                                        "barcodeCheck": barcode.available(), "started": STARTED,
+                                       "autoShip": bool(cfg.get("auto_ship")),
                                        "tagBarcode": cfg.get("tag_barcode") if cfg.get("tag_barcode") in ("code128", "code39") else "code128", "platform": "windows" if WINDOWS else "mac" if MAC else "linux"})
             if path == "/api/printers":
                 return self.send_json(printers())
@@ -1075,6 +1205,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"events": AUTO.since(int((q.get("after") or ["0"])[0]))})
             if path == "/api/update":
                 return self.send_json(check_update())
+            if path == "/api/stocks":                        # the designer's label list
+                return self.send_json({"stocks": list(STOCKS.values())})
+            if path == "/api/templates/shared":              # the shop's templates (templates/*.json in the repo)
+                return self.send_json({"templates": shared_templates()})
             if path == "/api/versions":                      # Settings → Version
                 return self.send_json(versions_info())
             if path == "/api/update/log":
@@ -1100,6 +1234,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(body)
                 return
+            if path == "/api/device":                        # ?serial= — been here before?
+                return self.send_json(device_info((q.get("serial") or [""])[0]))
+            if m := re.fullmatch(r"/api/ticket/(\d{1,10})", path):  # History → Scan a tag
+                return self.send_json(ticket_info(m.group(1)))
             if path == "/api/history":
                 f = {k: (q.get(k) or [""])[0] for k in ("q", "kind", "since", "until")}
                 items = history(limit=min(500, int((q.get("limit") or ["60"])[0])), before=int((q.get("before") or ["0"])[0]), **f)
@@ -1187,8 +1325,11 @@ class Handler(BaseHTTPRequestHandler):
                     if len(raw) != int(g["w"]) * int(g["h"]):
                         raise ValueError("grey image size mismatch")
                     gray = (int(g["w"]), int(g["h"]), raw)
+                stock = b.get("stock") or None
+                if stock is not None and stock not in STOCKS:
+                    raise ValueError("unknown label")
                 res, code = print_label(kind, png, copies, fields, force=bool(b.get("force")), gray=gray,
-                                        client_check=b.get("check") if isinstance(b.get("check"), dict) else None)
+                                        client_check=b.get("check") if isinstance(b.get("check"), dict) else None, stock=stock)
                 return self.send_json(res, code)
             if m := re.fullmatch(r"/api/job/(\d+)/cancel", path):
                 cancel_job(int(m.group(1)))
@@ -1209,6 +1350,16 @@ class Handler(BaseHTTPRequestHandler):
                 _cw_check.clear()
                 keys.clear()
                 return self.send_json(cw_status())
+            if m := re.fullmatch(r"/api/ticket/(\d{1,10})/collected", path):   # {collected: bool} — this PC's record only
+                set_collected(m.group(1), bool(b.get("collected", True)))
+                return self.send_json(ticket_info(m.group(1)))
+            if path == "/api/templates/share":               # {template} → templates/<name>.json in this checkout
+                return self.send_json({"ok": True, "path": share_template(b.get("template"))})
+            if path == "/api/sheet":                         # Batch → Open spreadsheet: {name, data: base64} → columns + rows
+                return self.send_json(sheet.read(str(b.get("name") or ""), base64.b64decode(b.get("data") or "", validate=True)))
+            if path == "/api/settings/auto-ship":            # Settings → Shipping labels print by themselves: {on}
+                save_config(auto_ship=bool(b.get("on")))
+                return self.send_json({"ok": True})
             if path == "/api/settings/tag-barcode":          # Settings → Tag barcode: {symbology: code128 | code39}
                 sym = str(b.get("symbology") or "")
                 if sym not in ("code128", "code39"):
@@ -1238,7 +1389,7 @@ class Handler(BaseHTTPRequestHandler):
                 AUTO.scan()
                 return self.send_json({"ok": True})
             if path == "/api/printers/use":                  # {kind, ip}: use this printer found on the network
-                use_printer(str(b.get("kind") or ""), str(b.get("ip") or ""))
+                use_printer(str(b.get("kind") or ""), str(b.get("key") or b.get("ip") or ""))
                 return self.send_json({"ok": True})
             if path == "/api/update/run":                    # Fedora: Update now (no local changes only)
                 run_update_now()

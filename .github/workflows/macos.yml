@@ -6,10 +6,11 @@ name: macOS
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch: {}
 permissions:
-  contents: read
+  contents: write                # the release job attaches LabelDesk-<v>.pkg; the test jobs only read
 jobs:
   mac:
     runs-on: macos-latest
@@ -34,24 +35,24 @@ jobs:
           sudo installer -pkg ~/dymo.pkg -target / || echo "installer reported a problem — checking the driver files anyway"
           ls -l /Library/Printers/PPDs/Contents/Resources/lw550t.ppd.gz /Library/Printers/PPDs/Contents/Resources/lw5xl.ppd.gz \
                 /Library/Printers/DYMO/Filters/V2/raster2dymolw
-      - name: Two fake LabelWriters announcing themselves on Bonjour; LabelDesk installed WITHOUT printer setup
+      # macOS's Local Network privacy stops a LaunchAgent's own Bonjour scan, so on the Mac LabelDesk asks CUPS (cupsd is
+      # a system daemon): the fakes are registered with the Mac's own Bonjour (dns-sd -R), like a real printer announces
+      - name: Two fake LabelWriters on the Mac's Bonjour; LabelDesk installed WITHOUT printer setup
         run: |
-          sudo ifconfig lo0 alias 127.0.0.2 up
           mkdir -p /tmp/ld-tag /tmp/ld-ship
-          nohup /usr/bin/python3 tests/fake_labelwriter.py /tmp/ld-tag --bind 127.0.0.1 --mdns "DYMO LabelWriter 550 Turbo" --roll 30252 > /tmp/fake-tag.log 2>&1 &
-          nohup /usr/bin/python3 tests/fake_labelwriter.py /tmp/ld-ship --bind 127.0.0.2 --mdns "DYMO LabelWriter 5XL" --roll 1744907 --left 212 > /tmp/fake-ship.log 2>&1 &
-          sleep 1
+          nohup /usr/bin/python3 tests/fake_labelwriter.py /tmp/ld-tag --bind 0.0.0.0 --port 9100 --roll 30252 > /tmp/fake-tag.log 2>&1 &
+          nohup /usr/bin/python3 tests/fake_labelwriter.py /tmp/ld-ship --bind 0.0.0.0 --port 9101 --roll 1744907 --left 212 > /tmp/fake-ship.log 2>&1 &
+          nohup dns-sd -R "DYMO LabelWriter 550 Turbo" _pdl-datastream._tcp local 9100 "ty=DYMO LabelWriter 550 Turbo" > /tmp/dnssd-tag.log 2>&1 &
+          nohup dns-sd -R "DYMO LabelWriter 5XL" _pdl-datastream._tcp local 9101 "ty=DYMO LabelWriter 5XL" > /tmp/dnssd-ship.log 2>&1 &
+          sleep 2
+          perl -e 'alarm 20; exec @ARGV' lpinfo --include-schemes dnssd -v || true
           tools/install-app.sh
-      # macOS Local Network privacy stops a LaunchAgent's Bonjour scan ("No route to host", seen here 2026-10-10), so on
-      # the Mac the queues come from tools/add-printers.sh as before; LabelDesk must say why and still read the rolls
-      - name: Queues by hand (Mac), rolls read by LabelDesk
+      - name: Printers set themselves up through CUPS (queues by Bonjour name)
         run: |
-          tools/add-printers.sh 127.0.0.1 127.0.0.2
-          /usr/bin/python3 tests/auto_check.py --wait 90 --queues-by-hand
-          curl -s http://127.0.0.1:8792/api/printers | /usr/bin/python3 -c "import json,sys; e=json.load(sys.stdin)['network']['error']; print('scan error shown:', e); assert e"
+          /usr/bin/python3 tests/auto_check.py --wait 120 --no-rolls
+          lpstat -v
       - name: Print through the Mac driver on the queues LabelDesk added
         run: |
-          lpstat -v
           /usr/bin/python3 tests/print_check.py /tmp/ld-tag /tmp/ld-ship
           tools/doctor.sh
       - name: Bonjour diagnostics
@@ -64,7 +65,7 @@ jobs:
       - name: Logs
         if: always()
         run: |
-          cat /tmp/fake-tag.log /tmp/fake-ship.log || true
+          cat /tmp/fake-tag.log /tmp/fake-ship.log /tmp/dnssd-*.log || true
           tail -50 ~/Library/Logs/LabelDesk.log || true
           lpstat -t || true
           sudo tail -40 /var/log/cups/error_log || true
@@ -73,3 +74,42 @@ jobs:
         with:
           name: printed-labels
           path: /tmp/ld-*/*.pbm
+
+  # The Mac installer package (unsigned): built and installed on a clean Mac like a coworker would — LabelDesk must end up
+  # cloned in ~/LabelDesk_Public and running. On a version tag it's attached to that release.
+  pkg:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    env:
+      DYMO_PKG_URL: https://download.dymo.com/dymo/Software/Mac/DCDMac1.4.3.103.pkg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/dymo.pkg
+          key: ${{ env.DYMO_PKG_URL }}
+      - name: DYMO Connect for Mac (as on a shop Mac)
+        run: |
+          [ -s ~/dymo.pkg ] || curl -fsSL -o ~/dymo.pkg "$DYMO_PKG_URL"
+          sudo installer -pkg ~/dymo.pkg -target / || true
+      - name: Build LabelDesk.pkg
+        run: |
+          branch=${GITHUB_HEAD_REF:-main}
+          LABELDESK_REPO_URL="https://github.com/${GITHUB_REPOSITORY}.git" tools/mac/build-pkg.sh --branch "$branch"
+      - name: Install it like a coworker would, check LabelDesk runs from ~/LabelDesk_Public
+        run: |
+          echo "console user: $(stat -f%Su /dev/console)"
+          sudo installer -pkg dist/LabelDesk-*.pkg -target / || { cat /tmp/labeldesk-install.log; exit 1; }
+          cat /tmp/labeldesk-install.log
+          test -d ~/LabelDesk_Public/.git && test -f ~/Library/LaunchAgents/com.labeldesk.app.plist && test -d ~/Applications/LabelDesk.app
+          curl -sf http://127.0.0.1:8792/api/config | /usr/bin/python3 -c 'import json,sys; c=json.load(sys.stdin); print("LabelDesk", c["version"], "on", c["platform"]); assert c["platform"] == "mac"'
+      - name: Attach to the release (version tags)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=$(tr -d '[:space:]' < VERSION)
+          for i in 1 2 3 4 5 6; do gh release view "v$v" >/dev/null 2>&1 && break; sleep 20; done   # the Windows job creates it
+          gh release view "v$v" >/dev/null 2>&1 || gh release create "v$v" --verify-tag --title "LabelDesk $v" --notes "LabelDesk $v"
+          gh release upload "v$v" "dist/LabelDesk-$v.pkg" "dist/LabelDesk-$v.pkg.sha256" --clobber
+
