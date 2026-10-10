@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""LabelDesk — DYMO label printing on Fedora (a DYMO Connect replacement for the shop's two network printers).
+"""LabelDesk — DYMO label printing on Fedora, macOS and Windows (a DYMO Connect replacement for the shop's two network printers).
 
 Standard library only. Serves the web app from ../web and a JSON API. Labels are drawn in the browser at the printer's
-300 dpi (what you see is exactly what prints); the server hands the PNG to CUPS with `lp`, follows the job until the
+300 dpi (what you see is exactly what prints); the server hands the PNG to CUPS with `lp` (macOS: the grey pixels as an
+exact-size PDF, see label_pdf), follows the job until the
 printer has finished (ipp.py) and explains problems in plain English, checks shipping labels' barcodes before they
 print (the browser with ZXing; barcode.py/zbar double-checks on Fedora), keeps a history for reprints, and watches
 for new labels (inbox.py: Downloads + the
@@ -40,6 +41,7 @@ import keys
 from inbox import SPOOL, Inbox, downloads_dir
 
 WINDOWS = sys.platform == "win32"
+MAC = sys.platform == "darwin"                                   # CUPS like Fedora, DYMO Connect for Mac's driver
 if WINDOWS:
     import winprint                                              # DYMO's Windows driver (DYMO Connect's), via ctypes
 else:
@@ -68,6 +70,9 @@ WEB = os.path.realpath(os.environ.get("LABELDESK_WEB") or os.path.join(HERE, "..
 if WINDOWS:
     CONF_FILE = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "LabelDesk", "config.json")
     DATA = os.environ.get("LABELDESK_DATA", os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "LabelDesk"))
+elif MAC:
+    CONF_FILE = os.path.expanduser("~/Library/Application Support/LabelDesk/config.json")
+    DATA = os.environ.get("LABELDESK_DATA", os.path.expanduser("~/Library/Application Support/LabelDesk"))
 else:
     CONF_FILE = os.path.expanduser("~/.config/labeldesk/config.json")
     DATA = os.environ.get("LABELDESK_DATA", os.path.expanduser("~/.local/share/labeldesk"))
@@ -224,20 +229,52 @@ def submit(kind, png_bytes, copies, gray=None):
         job, _paper = winprint.submit(printer, kind, gray, copies, f"LabelDesk {lab['name']}",
                                       paper=(lab["stock"].split()[0],) if kind == "tag" else None)
         return printer, job
+    if MAC and gray:
+        return lp(kind, label_pdf(labels()[kind], *gray), copies, ".pdf")
     return lp(kind, png_bytes, copies)
 
 
-def lp(kind, png_bytes, copies):
-    """Send one label image to its queue at exactly 300 dpi on the right page size. → (queue, job number)."""
+def label_pdf(lab, w, h, gray):
+    """The label as a one-page PDF exactly the label's page size, the w×h grey pixels placed at 300 dpi, centred in the
+    printable area — where `lp -o ppi=300 -o position=center` puts the PNG on Fedora. macOS prints images through its
+    own filters (which don't promise to honour ppi/position); a PDF of the right page size prints 1:1 everywhere."""
+    import zlib
+    pw, ph = round(lab["width_in"] * 72, 2), round(lab["height_in"] * 72, 2)
+    left, bottom, right, top = (v * 72 for v in lab["safe_in"])
+    iw, ih = w * 72 / 300, h * 72 / 300
+    x, y = left + (right - left - iw) / 2, bottom + (top - bottom - ih) / 2
+    content = f"q {iw:.3f} 0 0 {ih:.3f} {x:.3f} {y:.3f} cm /Im0 Do Q".encode()
+    image = zlib.compress(gray)
+    objs = [b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {pw:g} {ph:g}] /Resources << /XObject << /Im0 4 0 R >> >> "
+            f"/Contents 5 0 R >>".encode(),
+            f"<< /Type /XObject /Subtype /Image /Width {w} /Height {h} /ColorSpace /DeviceGray /BitsPerComponent 8 "
+            f"/Filter /FlateDecode /Length {len(image)} >>\nstream\n".encode() + image + b"\nendstream",
+            f"<< /Length {len(content)} >>\nstream\n".encode() + content + b"\nendstream"]
+    out, offsets = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"), []
+    for i, o in enumerate(objs, 1):
+        offsets.append(len(out))
+        out += f"{i} 0 obj\n".encode() + o + b"\nendobj\n"
+    xref = len(out)
+    out += f"xref\n0 {len(objs) + 1}\n0000000000 65535 f \n".encode()
+    out += b"".join(f"{o:010d} 00000 n \n".encode() for o in offsets)
+    out += f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    return bytes(out)
+
+
+def lp(kind, data, copies, suffix=".png"):
+    """Send one label (PNG, or the exact-size PDF from label_pdf) to its queue at exactly 300 dpi on the right page
+    size. → (queue, job number)."""
     queue = queue_for(kind)
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-        f.write(png_bytes)
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+        f.write(data)
         path = f.name
     try:
         lab = labels()[kind]
+        opts = ["-o", "ppi=300", "-o", "position=center"] if suffix == ".png" else []
         r = subprocess.run(["lp", "-d", queue, "-n", str(copies), "-t", f"LabelDesk {lab['name']}",
-                            "-o", f"PageSize={lab['page']}", "-o", "ppi=300", "-o", "position=center",
-                            path], capture_output=True, text=True, timeout=30)
+                            "-o", f"PageSize={lab['page']}", *opts, path], capture_output=True, text=True, timeout=30)
     finally:
         os.unlink(path)
     if r.returncode != 0:
@@ -362,7 +399,7 @@ def check_update(cfg=None, now=None):
     if res["how"] == "git":
         res["local"] = git_state()
         res["canUpdateNow"] = bool(res["local"]) and not res["local"]["dirty"] and not res["local"]["ahead"] \
-            and bool(shutil.which("systemd-run"))
+            and (MAC or bool(shutil.which("systemd-run")))
     res["canInstall"] = res["how"] == "windows"
     if not res["enabled"]:
         return res
@@ -459,10 +496,14 @@ def run_update_now():
         raise ValueError("this copy isn't a git checkout — reinstall from GitHub (SETUP.md section 1)")
     if st["dirty"] or st["ahead"]:
         raise ValueError(f"this PC has changes that aren't on GitHub yet — run tools/update.sh in {ROOT} so they're merged")
-    if not shutil.which("systemd-run"):
-        raise ValueError("systemd-run isn't available — run tools/update.sh in a Terminal")
     os.makedirs(DATA, exist_ok=True)
     cmd = f"cd {shlex_quote(ROOT)} && tools/update.sh > {shlex_quote(update_log())} 2>&1"
+    if MAC:                                                      # own session: survives launchd restarting LabelDesk
+        subprocess.Popen(["/bin/bash", "-c", cmd], start_new_session=True, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return
+    if not shutil.which("systemd-run"):
+        raise ValueError("systemd-run isn't available — run tools/update.sh in a Terminal")
     subprocess.run(["systemd-run", "--user", "--collect", "--quiet", f"--unit=labeldesk-update-{int(time.time())}",
                     "/bin/bash", "-c", cmd], check=True, capture_output=True, timeout=15)
 
@@ -711,7 +752,7 @@ class Handler(BaseHTTPRequestHandler):
                 cfg = config()
                 return self.send_json({"version": VERSION, "labels": labels(cfg), "tagStocks": TAG_STOCKS,
                                        "tagLabel": labels(cfg)["tag"]["stock"].split()[0], "flipTag": cfg["flip_tag"], "tagOffsetMm": float(cfg.get("tag_offset_mm") or 0),
-                                       "barcodeCheck": barcode.available(), "platform": "windows" if WINDOWS else "linux"})
+                                       "barcodeCheck": barcode.available(), "platform": "windows" if WINDOWS else "mac" if MAC else "linux"})
             if path == "/api/printers":
                 return self.send_json(printers())
             if path == "/api/update":
@@ -809,7 +850,7 @@ class Handler(BaseHTTPRequestHandler):
                 copies = max(1, min(99, int(b.get("copies") or 1)))
                 fields = b.get("fields") if isinstance(b.get("fields"), dict) else {}
                 gray = None
-                if b.get("gray"):                              # Windows: {w, h, data: base64 of w*h grey bytes}
+                if b.get("gray"):                              # Windows + Mac: {w, h, data: base64 of w*h grey bytes}
                     g = b["gray"]
                     raw = base64.b64decode(g["data"], validate=True)
                     if len(raw) != int(g["w"]) * int(g["h"]):

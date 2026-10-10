@@ -4,6 +4,7 @@
 # source (github.com/dymosoftware/Drivers, LW5xx_Linux) and installs raster2dymolw_v2 + lw550t.ppd / lw5xl.ppd.
 # Two fixes needed on a current Fedora: boost-devel (the source bundles only part of Boost) and "-include ctime"
 # (their code uses time()/difftime() without #include <ctime>, which new GCC rejects).
+[ "$(uname)" = Darwin ] && { echo "On a Mac the driver comes with DYMO Connect for Mac — tools/install-all.sh checks for it"; exit 0; }
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 COMMIT=${DYMO_DRIVERS_COMMIT:-9f2f15b3f1c2dddf4dcdfb64f380748120d249ba}     # pinned: the commit this was tested with

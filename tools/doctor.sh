@@ -2,6 +2,7 @@
 # LabelDesk health check — run it when something doesn't print, and after Fedora upgrades.
 # Checks each piece in order and says exactly what's wrong; with --fix it repairs what's safe to repair
 # (SELinux rule, paused queues, the app service). Nothing is changed without --fix.
+[ "$(uname)" = Darwin ] && exec "$(dirname "$0")/mac/doctor.sh" "$@"   # macOS: tools/mac/
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd); fix=0; [ "${1:-}" = "--fix" ] && fix=1
 bad=0

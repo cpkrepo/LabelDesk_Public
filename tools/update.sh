@@ -32,8 +32,9 @@ up="$REMOTE/$BRANCH"
 remote_ver=$(git show "$up:VERSION" 2>/dev/null | tr -d '[:space:]' || echo 0.0.0)
 
 # ---- 1. what's changed on this PC
-mapfile -t new_src < <(git ls-files --others --exclude-standard | grep -E "$SRC" || true)
-mapfile -t new_other < <(git ls-files --others --exclude-standard | grep -vE "$SRC" || true)
+new_src=(); new_other=()                    # (no mapfile: macOS ships bash 3.2)
+while IFS= read -r f; do [ -n "$f" ] && new_src+=("$f"); done < <(git ls-files --others --exclude-standard | grep -E "$SRC" || true)
+while IFS= read -r f; do [ -n "$f" ] && new_other+=("$f"); done < <(git ls-files --others --exclude-standard | grep -vE "$SRC" || true)
 dirty=$(git status --porcelain --untracked-files=no)
 ahead=$(git rev-list --count "$up..HEAD" 2>/dev/null || echo 0)
 behind=$(git rev-list --count "HEAD..$up" 2>/dev/null || echo 0)
@@ -93,5 +94,5 @@ else
 fi
 
 # ---- 4. restart on the new code (only where the app is installed)
-if [ -f ~/.config/systemd/user/labeldesk.service ]; then tools/install-app.sh
+if [ -f ~/.config/systemd/user/labeldesk.service ] || [ -f ~/Library/LaunchAgents/com.labeldesk.app.plist ]; then tools/install-app.sh
 else echo "(LabelDesk isn't installed as an app on this PC — skipping restart)"; fi

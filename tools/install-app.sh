@@ -3,6 +3,7 @@
 # server/app.py from THIS checkout, plus an app-menu entry ("LabelDesk") that opens it in the browser.
 #   tools/install-app.sh            install / update (re-run after `git pull`)
 #   tools/install-app.sh --remove   uninstall
+[ "$(uname)" = Darwin ] && exec "$(dirname "$0")/mac/install-app.sh" "$@"   # macOS: tools/mac/
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 unit=~/.config/systemd/user/labeldesk.service

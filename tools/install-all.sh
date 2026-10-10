@@ -4,6 +4,7 @@
 #   tools/install-all.sh <550T-ip> <5XL-ip>   # or give their IPs
 # Needs sudo (asks once per step) and internet (DYMO's driver source comes from github.com/dymosoftware).
 # Safe to re-run. Afterwards: app menu → LabelDesk, or http://127.0.0.1:8792.
+[ "$(uname)" = Darwin ] && exec "$(dirname "$0")/mac/install-all.sh" "$@"   # macOS: tools/mac/
 set -euo pipefail
 cd "$(dirname "$0")/.."
 echo "== 1/4 DYMO 550-series driver";  tools/install-driver.sh

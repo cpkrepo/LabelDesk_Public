@@ -222,7 +222,7 @@ async function track(id, what, kind, retry) {
   jobbar(`${PRINTER_NAME[kind]} hasn't finished "${what}" after 2 minutes — check the printer`, "bad");
   return false;
 }
-// Windows: the label as 8-bit grey pixels (the server hands them straight to the DYMO driver — no PNG decoding there)
+// Windows + Mac: the label as 8-bit grey pixels (Windows: straight to the DYMO driver; Mac: an exact-size PDF — no PNG decoding)
 function grayOf(canvas) {
   const { width: w, height: h } = canvas, d = canvas.getContext("2d").getImageData(0, 0, w, h).data;
   const g = new Uint8Array(w * h);
@@ -248,7 +248,7 @@ async function printCanvas(kind, canvas, copies, fields, what, { force = false, 
         return false;
       }
     }
-    const gray = CFG.platform === "windows" ? grayOf(canvas) : undefined;
+    const gray = CFG.platform === "windows" || CFG.platform === "mac" ? grayOf(canvas) : undefined;
     jobbar(`Sending to the ${PRINTER_NAME[kind]}… — ${what}`, "wait");
     const r = await api("print", { kind, png, gray, check, copies, fields, force: force || Date.now() < forceUntil });
     const label = r.check?.tracking ? `${what} · ${r.check.carrier} ${r.check.tracking}` : what;

@@ -7,6 +7,7 @@
 # Usage:  tools/add-printers.sh                    # find the DYMOs on the network by name (recommended)
 #         tools/add-printers.sh <550T-ip> <5XL-ip> # or fixed IPs (then give the printers DHCP reservations)
 # By name (Bonjour/dnssd) the queues keep working when a printer gets a new IP; raw port 9100 underneath.
+[ "$(uname)" = Darwin ] && exec "$(dirname "$0")/mac/add-printers.sh" "$@"   # macOS: tools/mac/
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 PORT=${DYMO_PORT:-9100}
