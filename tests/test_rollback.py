@@ -55,6 +55,16 @@ class Rollback(Update):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual((self.hub_version(), self.hub_file("app.py").stdout), ("0.6.3", "A = 'bad'\nB = 1\n"))
 
+    def test_changelog_is_kept_and_says_what_happened(self):
+        sh(self.b, "git", "pull", "-q")
+        self.write(self.b, "CHANGELOG.md", "# What's new\n\n## Unreleased\n\n## 0.6.1 — 2026-10-02\n- bad thing\n")
+        sh(self.b, "git", "add", "CHANGELOG.md"); sh(self.b, "git", "commit", "-qm", "notes"); sh(self.b, "git", "push", "-q")
+        r = self.rollback(self.b, "0.6.0", "broke tags")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        log = self.hub_file("CHANGELOG.md").stdout                              # v0.6.0 had none: kept from main
+        self.assertRegex(log, r"## Unreleased\n\n## 0\.6\.2 — [\d-]+\n- \*\*Rolled back\*\* to the code of 0\.6\.0 — broke tags")
+        self.assertIn("- bad thing", log)
+
     def test_refuses_unknown_version_and_unpushed_work(self):
         self.assertNotEqual(self.rollback(self.b, "9.9.9").returncode, 0)
         self.write(self.b, "app.py", "local edit\n")

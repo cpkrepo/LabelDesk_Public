@@ -116,6 +116,32 @@ class Update(unittest.TestCase):
         self.assertEqual(self.update(self.a).returncode, 0)
         self.assertEqual(self.hub_version(), "0.7.0")
 
+    def changelog_pc(self):
+        """PC a with a CHANGELOG.md like the real one, pushed (as if it had always been there)."""
+        self.write(self.a, "CHANGELOG.md", "# What's new\n\n## Unreleased\n\n## 0.6.0 — 2026-10-01\n- old\n")
+        sh(self.a, "git", "add", "CHANGELOG.md"); sh(self.a, "git", "commit", "-qm", "changelog"); sh(self.a, "git", "push", "-q")
+        return self.a
+
+    def hub_changelog(self):
+        return sh(self.tmp, "git", "--git-dir", self.hub, "show", "main:CHANGELOG.md").stdout
+
+    def test_unreleased_notes_become_the_version(self):
+        a = self.changelog_pc()
+        self.write(a, "app.py", "A = 3\nB = 1\n")
+        self.write(a, "CHANGELOG.md", self.read(a, "CHANGELOG.md").replace("## Unreleased\n", "## Unreleased\n- Bigger font\n"))
+        self.assertEqual(self.update(a).returncode, 0)
+        log = self.hub_changelog()
+        self.assertRegex(log, r"## Unreleased\n\n## 0\.6\.1 — \d{4}-\d\d-\d\d\n- Bigger font\n\n## 0\.6\.0")
+
+    def test_no_notes_uses_the_commit_messages(self):
+        a = self.changelog_pc()
+        self.write(a, "app.py", "A = 4\nB = 1\n")
+        sh(a, "git", "commit", "-qam", "Tag font bigger")
+        self.assertEqual(self.update(a).returncode, 0)
+        log = self.hub_changelog()
+        self.assertIn("\n- Tag font bigger\n", log.split("## 0.6.1", 1)[1].split("## 0.6.0")[0])
+        self.assertNotIn("changelog", log.split("## 0.6.1", 1)[1].split("## 0.6.0")[0])
+
 
 if __name__ == "__main__":
     unittest.main()

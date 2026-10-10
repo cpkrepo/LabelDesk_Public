@@ -63,6 +63,11 @@ from the app menu.
 The full guide for technicians (printers that can't be found, GitHub access, publishing installers) is
 **[SETUP.md](SETUP.md)**.
 
+## Version history
+**[CHANGELOG.md](CHANGELOG.md)** lists what's new in every version (newest first); each
+[release](https://github.com/cpkrepo/LabelDesk_Public/releases) shows its own notes. Latest: **0.8.0 — LabelDesk runs
+on macOS.**
+
 ## Updates
 After each print LabelDesk asks GitHub for the newest version number (one small file; nothing about your labels is
 sent) and shows a notice when there's a newer one:

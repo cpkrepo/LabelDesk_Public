@@ -29,5 +29,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           v=$(tr -d '[:space:]' < VERSION)
-          gh release view "v$v" >/dev/null 2>&1 || gh release create "v$v" --verify-tag --title "LabelDesk $v" --notes "LabelDesk $v"
+          # release notes = this version's section of CHANGELOG.md (what changed, for the people using it)
+          awk -v h="## $v " 'index($0, h) == 1 {f=1; next} /^## /{f=0} f' CHANGELOG.md > notes.md 2>/dev/null || true
+          grep -q '[^[:space:]]' notes.md || echo "LabelDesk $v" > notes.md
+          printf '\n---\nWindows: run the .msi below (or **Install update** in LabelDesk). Mac and Fedora: **Update now** in LabelDesk.\nAll versions: [CHANGELOG.md](https://github.com/%s/blob/main/CHANGELOG.md)\n' "$GITHUB_REPOSITORY" >> notes.md
+          if gh release view "v$v" >/dev/null 2>&1; then gh release edit "v$v" --notes-file notes.md
+          else gh release create "v$v" --verify-tag --title "LabelDesk $v" --notes-file notes.md; fi
           gh release upload "v$v" "dist/LabelDesk-$v.msi" "dist/LabelDesk-$v.msi.sha256" --clobber

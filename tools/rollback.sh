@@ -6,13 +6,14 @@
 #   tools/rollback.sh 0.7.0 "why"           GitHub's main becomes 0.7.0's code, published as e.g. 0.7.3 + tag v0.7.3
 #
 # Nothing is deleted: the bad version stays in the history and can be brought back the same way (rollback to it).
-# Kept from the current version so they're never lost: this script, its test and the rollback skill.
+# Kept from the current version so they're never lost: this script, its test, the rollback skill and CHANGELOG.md
+# (which gets a "Rolled back" entry).
 # Needs: no unpushed work on this PC (run tools/update.sh first), and the unit tests of the old code must pass.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 REMOTE=${LABELDESK_REMOTE:-origin}
 BRANCH=${LABELDESK_BRANCH:-main}
-KEEP="tools/rollback.sh tests/test_rollback.py .claude/skills/labeldesk-rollback"
+KEEP="tools/rollback.sh tests/test_rollback.py .claude/skills/labeldesk-rollback CHANGELOG.md .gitattributes"
 
 die() { echo "✗ $1" >&2; exit "${2:-1}"; }
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "this folder isn't a git checkout"
@@ -42,6 +43,12 @@ git read-tree -u --reset "v$old"                                  # the old vers
 for k in $KEEP; do git checkout "$start" -- "$k" 2>/dev/null || true; done   # (already staged when it exists)
 echo "$new" > VERSION
 git add VERSION
+if [ -f CHANGELOG.md ] && grep -q '^## Unreleased' CHANGELOG.md; then                # the history says what happened
+  tmp=$(mktemp)
+  HEAD_LINE="## $new — $(date +%Y-%m-%d)" NOTES="- **Rolled back** to the code of $old${why:+ — $why}. (Undo: \`tools/rollback.sh $remote_ver\`)" \
+    awk '/^## Unreleased/ { print; print ""; print ENVIRON["HEAD_LINE"]; print ENVIRON["NOTES"]; next } { print }' CHANGELOG.md > "$tmp"
+  mv "$tmp" CHANGELOG.md; git add CHANGELOG.md
+fi
 git commit --quiet -m "Roll back to $old (published as $new)${why:+: $why}" \
   -m "Code of v$old, except $KEEP (kept from $remote_ver). Undo: tools/rollback.sh $remote_ver"
 

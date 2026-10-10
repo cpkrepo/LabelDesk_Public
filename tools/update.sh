@@ -23,6 +23,22 @@ git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "this folder isn't a 
 [ -z "$(git rev-parse -q --verify REBASE_HEAD 2>/dev/null || true)" ] || die "a rebase is already in progress here — finish or abort it first (git rebase --abort)"
 
 ver() { tr -d '[:space:]' < VERSION 2>/dev/null || echo 0.0.0; }
+changelog() { # changelog VERSION UPSTREAM: "## Unreleased" notes become "## VERSION — date" (none written: this PC's
+  # commit messages instead), so every version on GitHub says what changed (README → CHANGELOG.md, release notes)
+  [ -f CHANGELOG.md ] && grep -q '^## Unreleased' CHANGELOG.md || return 0
+  ! grep -q "^## $1 " CHANGELOG.md || return 0
+  local notes tmp; tmp=$(mktemp)
+  notes=$(awk '/^## Unreleased/{f=1;next} /^## /{f=0} f' CHANGELOG.md | grep '[^[:space:]]' || true)
+  if [ -z "$notes" ]; then
+    notes=$(git log --no-merges --format='- %s' "$2..HEAD" | grep -vE '^- (LabelDesk [0-9.]+$|Local changes on )' || true)
+    [ -n "$notes" ] || notes="- Small fixes."
+  fi
+  HEAD_LINE="## $1 — $(date +%Y-%m-%d)" NOTES="$notes" awk '        # (ENVIRON: BSD awk rejects newlines in -v)
+    /^## Unreleased/ { print; print ""; print ENVIRON["HEAD_LINE"]; print ENVIRON["NOTES"]; skip=1; next }
+    skip && /^## / { skip=0; print "" }
+    !skip { print }' CHANGELOG.md > "$tmp" && mv "$tmp" CHANGELOG.md
+  git add CHANGELOG.md; git commit --quiet -m "LabelDesk $1: changelog"
+}
 newer() { # newer A B → true if version A > version B
   [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)" = "$1" ]; }
 
@@ -80,6 +96,7 @@ else
   if [ "$new_ver" != "$local_ver" ]; then
     echo "$new_ver" > VERSION; git add VERSION; git commit --quiet -m "LabelDesk $new_ver"
   fi
+  changelog "$new_ver" "$up"
   echo "→ running the unit tests before pushing…"
   if ! python3 -m unittest discover -s tests -q >/tmp/labeldesk-update-tests.log 2>&1; then
     tail -20 /tmp/labeldesk-update-tests.log

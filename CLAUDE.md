@@ -30,7 +30,8 @@ the Windows app's "Install update" uses.
 ## Shipping a change (every technician, every change — no need to ask)
 1. Make the change; test at the level it needs (labeldesk-testing skill; app.js changes need the render check) and say
    which level you reached.
-2. Version: the version lives only in `./VERSION`. Raise it yourself for a feature (0.6.x → 0.7.0); otherwise leave it —
+2. Changelog: add a line for the people using it under `## Unreleased` in CHANGELOG.md (update.sh turns it into the
+   version's heading + release notes). Version: the version lives only in `./VERSION`. Raise it yourself for a feature (0.6.x → 0.7.0); otherwise leave it —
    update.sh adds one to the last number.
 3. Commit with a real message, then run `tools/update.sh`: it commits leftovers, rebases this PC's commits onto GitHub's
    newest main, bumps VERSION if needed, runs the unit tests, pushes main + tag `v<version>`, restarts the app.
