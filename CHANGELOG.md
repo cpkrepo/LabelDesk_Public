@@ -7,6 +7,8 @@ installer attached) and any of them can be brought back with `tools/rollback.sh 
 the owner's `tools/update.sh` turns that heading into the version number when it publishes.
 
 ## Unreleased
+
+## 0.9.1 — 2026-10-10
 - **Customer name goes after the company** on the tag's top line — "Destify - Chris Killion" — instead of a line
   of its own. A home customer's name is the company, so it isn't printed twice.
 
