@@ -24,16 +24,31 @@ MODEL_NAME = {"550T": "LabelWriter 550 Turbo", "550": "LabelWriter 550", "5XL": 
 ROLL_EVERY = 30
 
 
+def key(p):
+    """A found printer's identity: its IP (LabelDesk's own Bonjour scan, Windows) or its CUPS device URI (Mac: found
+    through CUPS, which knows the name, not the address)."""
+    return p.get("ip") or p.get("uri") or p["name"]
+
+
+def device_uri(p):
+    """Where a queue for this printer prints: CUPS's dnssd:// URI (follows the printer when its IP changes) or socket://."""
+    return p.get("uri") or f"socket://{p['ip']}:{p.get('port') or dymo.PORT}"
+
+
 def socket_host(uri):
     """'socket://192.0.2.5:9100' → ('192.0.2.5', 9100); anything else → (None, None)."""
     m = re.fullmatch(r"socket://([^/:]+)(?::(\d+))?/?", uri or "")
     return (m.group(1), int(m.group(2) or dymo.PORT)) if m else (None, None)
 
 
+def where(p, prep=" at"):
+    return f"{prep} {p['ip']}" if p.get("ip") else f" (“{p['name']}”)"
+
+
 class Auto:
     def __init__(self, ops, browse=dymo.browse, status=dymo.status, sku_info=dymo.sku_info, can_manage=True):
-        """ops: queue(kind) → queue name · uri(queue) → device URI or None (no such queue) · add(kind, queue, ip, port,
-        model) · repoint(queue, ip, port) · answers(ip, port) → bool · busy(kind) → bool (a job is going to it).
+        """ops: queue(kind) → queue name · uri(queue) → device URI or None (no such queue) · add(kind, queue, uri, model)
+        · repoint(queue, uri) · answers(ip, port) → bool · busy(kind) → bool (a job is going to it).
         can_manage False (Windows) = never change anything, only offer."""
         self.ops, self.browse, self.status, self.sku_info, self.can_manage = ops, browse, status, sku_info, can_manage
         self.found, self.offers, self.events, self.at, self.scanning = [], [], [], 0.0, False
@@ -77,46 +92,46 @@ class Auto:
         for _q, uri, _ip in used.values():                        # dnssd://<Bonjour name>._pdl-datastream…: by name
             if (uri or "").startswith("dnssd://"):
                 name = urllib.parse.unquote(uri[8:].split("._", 1)[0])
-                in_use |= {p["ip"] for p in found if p["name"] == name}
+                in_use |= {key(p) for p in found if p["name"] == name}
         offers = []
         for kind, models in ROLE_MODELS.items():
             q, uri, ip = used[kind]
             cands = [p for p in found if p["model"] in models]
-            fresh = [p for p in cands if p["ip"] not in in_use]
+            fresh = [p for p in cands if key(p) not in in_use]
             what = "tags" if kind == "tag" else "shipping labels"
             if not q or uri is None:                             # no queue for this kind on this PC yet
                 if len(fresh) == 1 and self.can_manage:
                     p = fresh[0]
                     try:
-                        self.ops.add(kind, q, p["ip"], p["port"], p["model"])
-                        in_use.add(p["ip"])
-                        self.event(f"Found the DYMO {MODEL_NAME[p['model']]} at {p['ip']} and set it up for {what}.")
+                        self.ops.add(kind, q, device_uri(p), p["model"])
+                        in_use.add(key(p))
+                        self.event(f"Found the DYMO {MODEL_NAME[p['model']]}{where(p)} and set it up for {what}.")
                     except Exception as e:                       # noqa: BLE001 — say why, offer it instead
-                        self.event(f"Found the DYMO {MODEL_NAME[p['model']]} at {p['ip']} but couldn't add it: {e}", "bad")
+                        self.event(f"Found the DYMO {MODEL_NAME[p['model']]}{where(p)} but couldn't add it: {e}", "bad")
                         offers.append(dict(p, kind=kind, why="add"))
                     continue
                 offers += [dict(p, kind=kind, why="add") for p in fresh]
                 continue
             if ip is None:                                        # dnssd:// or USB: CUPS follows the printer itself
                 continue
-            if ip in {p["ip"] for p in cands}:                    # its printer is where the queue says
+            if ip in {p.get("ip") for p in cands}:               # its printer is where the queue says
                 continue
             if self.ops.answers(ip, socket_host(uri)[1]):         # something answers there and it's not announced:
                 continue                                          # leave it alone (Bonjour may just be off)
             if len(fresh) == 1 and self.can_manage:               # gone from its address; exactly one replacement
                 p = fresh[0]
                 try:
-                    self.ops.repoint(q, p["ip"], p["port"])
-                    in_use.add(p["ip"])
-                    self.event(f"The {MODEL_NAME[p['model']]} moved to {p['ip']} (was {ip}) — LabelDesk follows it now.")
+                    self.ops.repoint(q, device_uri(p))
+                    in_use.add(key(p))
+                    self.event(f"The {MODEL_NAME[p['model']]} moved{where(p, ' to')} (was {ip}) — LabelDesk follows it now.")
                 except Exception as e:                           # noqa: BLE001
-                    self.event(f"The {MODEL_NAME[p['model']]} is now at {p['ip']} but LabelDesk couldn't switch to it: {e}", "bad")
+                    self.event(f"The {MODEL_NAME[p['model']]} is now{where(p)} but LabelDesk couldn't switch to it: {e}", "bad")
                     offers.append(dict(p, kind=kind, why="moved"))
                 continue
             offers += [dict(p, kind=kind, why="moved") for p in fresh]
-        known = {o["ip"] for o in offers}
+        known = {key(o) for o in offers}
         for p in found:                                           # anything else DYMO: list it, don't touch it
-            if p["ip"] not in in_use and p["ip"] not in known:
+            if key(p) not in in_use and key(p) not in known:
                 offers.append(dict(p, kind="tag" if p["model"] in ROLE_MODELS["tag"] else "ship", why="extra"))
         return offers
 
@@ -129,10 +144,10 @@ class Auto:
             return ip, port
         if (uri or "").startswith("dnssd://"):
             name = urllib.parse.unquote(uri[8:].split("._", 1)[0])
-            named = [p for p in self.found if p["name"] == name]
+            named = [p for p in self.found if p["name"] == name and p.get("ip")]
             if named:
                 return named[0]["ip"], named[0]["port"]
-        cands = [p for p in self.found if p["model"] in ROLE_MODELS[kind]]
+        cands = [p for p in self.found if p["model"] in ROLE_MODELS[kind] and p.get("ip")]
         return (cands[0]["ip"], cands[0]["port"]) if len(cands) == 1 else (None, None)
 
     def roll(self, kind, now=None):

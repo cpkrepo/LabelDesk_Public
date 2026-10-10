@@ -69,6 +69,16 @@ class Bytes(unittest.TestCase):
         got = sorted((p["ip"], p["model"], p["port"]) for p in dymo.collect(recs))
         self.assertEqual(got, [("192.0.2.20", "550T", 9100), ("192.0.2.21", "5XL", 9100)])   # raw port, not IPP's 631
 
+    def test_cups_dnssd_list(self):                          # lpinfo --include-schemes dnssd -v (Mac's scan)
+        out = """network dnssd://DYMO%20LabelWriter%205XL._pdl-datastream._tcp.local/
+network dnssd://DYMO%20LabelWriter%205XL._ipp._tcp.local/?uuid=1234
+network dnssd://Brother%20HL-2350._ipp._tcp.local/?uuid=99
+network dnssd://DYMOLW550T1A2B3C._printer._tcp.local/
+direct usb://DYMO/LabelWriter%205XL"""
+        got = sorted((p["model"], p["uri"]) for p in dymo.parse_lpinfo(out))
+        self.assertEqual(got, [("550T", "dnssd://DYMOLW550T1A2B3C._printer._tcp.local/"),
+                               ("5XL", "dnssd://DYMO%20LabelWriter%205XL._pdl-datastream._tcp.local/")])
+
     def test_query_packet(self):
         q = dymo.query()
         self.assertEqual(struct.unpack_from(">H", q, 4)[0], len(dymo.SERVICES))
@@ -85,15 +95,15 @@ class FakeOps:
     def uri(self, q):
         return self.uris.get(q)
 
-    def add(self, kind, q, ip, port, model):
+    def add(self, kind, q, uri, model):
         if self.fail:
             raise RuntimeError(self.fail)
-        self.calls.append(("add", q, ip, model))
-        self.uris[q] = f"socket://{ip}:{port}"
+        self.calls.append(("add", q, uri, model))
+        self.uris[q] = uri
 
-    def repoint(self, q, ip, port):
-        self.calls.append(("repoint", q, ip))
-        self.uris[q] = f"socket://{ip}:{port}"
+    def repoint(self, q, uri):
+        self.calls.append(("repoint", q, uri))
+        self.uris[q] = uri
 
     def answers(self, ip, port):
         return ip in self.alive
@@ -117,7 +127,8 @@ class Decisions(unittest.TestCase):
     def test_missing_queues_are_added_when_the_printer_is_unambiguous(self):
         ops = FakeOps()
         a = auto(ops, [T, X])
-        self.assertEqual(ops.calls, [("add", "Dymo-550-Turbo", "192.0.2.20", "550T"), ("add", "Dymo-5XL", "192.0.2.21", "5XL")])
+        self.assertEqual(ops.calls, [("add", "Dymo-550-Turbo", "socket://192.0.2.20:9100", "550T"),
+                                     ("add", "Dymo-5XL", "socket://192.0.2.21:9100", "5XL")])
         self.assertEqual(len(a.since(0)), 2)
         self.assertIn("set it up for shipping labels", a.since(0)[1]["text"])
         self.assertEqual(a.offers, [])
@@ -125,7 +136,7 @@ class Decisions(unittest.TestCase):
     def test_a_printer_that_moved_is_followed(self):
         ops = FakeOps({"Dymo-5XL": "socket://192.0.2.99:9100", "Dymo-550-Turbo": "socket://192.0.2.20:9100"})
         a = auto(ops, [T, X])
-        self.assertEqual(ops.calls, [("repoint", "Dymo-5XL", "192.0.2.21")])
+        self.assertEqual(ops.calls, [("repoint", "Dymo-5XL", "socket://192.0.2.21:9100")])
         self.assertIn("moved to 192.0.2.21 (was 192.0.2.99)", a.since(0)[0]["text"])
 
     def test_a_queue_whose_printer_still_answers_is_left_alone(self):
@@ -145,6 +156,19 @@ class Decisions(unittest.TestCase):
         ops = FakeOps({"Dymo-550-Turbo": "dnssd://DYMO%20LabelWriter%20550%20Turbo._pdl-datastream._tcp.local/",
                        "Dymo-5XL": "socket://192.0.2.21:9100"})
         self.assertEqual((auto(ops, [T, X]).offers, ops.calls), ([], []))
+
+    def test_printers_found_through_cups_by_name_get_dnssd_queues(self):
+        # Mac: CUPS finds them by Bonjour name (no IP) — queues print to dnssd://…, CUPS follows the printer itself
+        tx = {"name": "DYMO LabelWriter 5XL", "model": "5XL", "uri": "dnssd://DYMO%20LabelWriter%205XL._pdl-datastream._tcp.local/", "port": 9100}
+        ops = FakeOps()
+        a = auto(ops, [tx])
+        self.assertEqual(ops.calls, [("add", "Dymo-5XL", tx["uri"], "5XL")])
+        self.assertIn("“DYMO LabelWriter 5XL”", a.since(0)[0]["text"])
+        ops.calls.clear()
+        self.assertEqual((auto(ops, [tx]).offers, ops.calls), ([], []))           # next scan: in use by name, nothing to do
+        dead = FakeOps({"Dymo-5XL": "socket://192.0.2.99:9100"})                 # an old socket queue, printer gone
+        auto(dead, [tx])
+        self.assertEqual(dead.calls, [("repoint", "Dymo-5XL", tx["uri"])])
 
     def test_windows_only_offers(self):
         ops = FakeOps()

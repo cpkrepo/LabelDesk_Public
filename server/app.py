@@ -824,14 +824,14 @@ class QueueOps:
                 return m
         raise RuntimeError("DYMO's driver isn't installed (" + ("DYMO Connect for Mac" if MAC else "tools/install-driver.sh") + ")")
 
-    def add(self, kind, q, ip, port, model):
+    def add(self, kind, q, uri, model):
         lab = labels()[kind]
         desc = f"DYMO {autoprint.MODEL_NAME[model]} ({'inventory tags' if kind == 'tag' else 'shipping'})"
-        self._lpadmin(["-p", q, "-E", "-v", f"socket://{ip}:{port}", "-m", self.ppd(model), "-D", desc,
+        self._lpadmin(["-p", q, "-E", "-v", uri, "-m", self.ppd(model), "-D", desc,
                        "-o", f"PageSize={lab['page']}", "-o", "printer-error-policy=abort-job"])
 
-    def repoint(self, q, ip, port):
-        self._lpadmin(["-p", q, "-v", f"socket://{ip}:{port}"])
+    def repoint(self, q, uri):
+        self._lpadmin(["-p", q, "-v", uri])
 
     def _lpadmin(self, args):
         r = subprocess.run(["lpadmin", *args], capture_output=True, text=True, timeout=30)
@@ -859,7 +859,18 @@ class QueueOps:
             return False
 
 
-AUTO = autoprint.Auto(QueueOps(), can_manage=not WINDOWS)
+def _browse():
+    """LabelDesk's own Bonjour scan (gives IPs → rolls); on the Mac through CUPS (macOS blocks the LaunchAgent's own scan),
+    and anywhere the own scan fails."""
+    if MAC:
+        return dymo.browse_cups()
+    found = dymo.browse()
+    if not found and dymo.LAST.get("error") and not WINDOWS:
+        return dymo.browse_cups()
+    return found
+
+
+AUTO = autoprint.Auto(QueueOps(), browse=_browse, can_manage=not WINDOWS)
 
 
 def heal_once():
@@ -935,23 +946,26 @@ def printers():
     return out
 
 
-def use_printer(kind, ip):
-    """Settings → Printers on the network → Use for tags / shipping: point this kind's queue at that printer."""
+def use_printer(kind, k):
+    """Settings → Printers on the network → Use for tags / shipping: point this kind's queue at that printer (k = its
+    key: IP or CUPS URI, autoprint.key)."""
     if kind not in ("tag", "ship"):
         raise ValueError("kind must be tag or ship")
-    p = next((p for p in AUTO.found if p["ip"] == ip), None)
+    p = next((p for p in AUTO.found if autoprint.key(p) == k), None)
     if not p:
         raise ValueError("that printer isn't on the network any more — Look again")
     if WINDOWS:
-        return windows_add_dymo("5XL" if p["model"] == "5XL" else "550", ip)
+        if not p.get("ip"):
+            raise ValueError("no address for that printer — add it in DYMO Connect")
+        return windows_add_dymo("5XL" if p["model"] == "5XL" else "550", p["ip"])
     ops, q = AUTO.ops, queue_for(kind)
     if ops.uri(q) is None:
-        ops.add(kind, q, ip, p["port"], p["model"])
+        ops.add(kind, q, autoprint.device_uri(p), p["model"])
     else:
-        ops.repoint(q, ip, p["port"])
+        ops.repoint(q, autoprint.device_uri(p))
     AUTO.forget_roll(kind)
-    AUTO.event(f"{'Tags' if kind == 'tag' else 'Shipping labels'} now print on the {autoprint.MODEL_NAME[p['model']]} at {ip}.")
-    AUTO.offers = [o for o in AUTO.offers if o["ip"] != ip]
+    AUTO.event(f"{'Tags' if kind == 'tag' else 'Shipping labels'} now print on the {autoprint.MODEL_NAME[p['model']]}{autoprint.where(p)}.")
+    AUTO.offers = [o for o in AUTO.offers if autoprint.key(o) != k]
 
 
 def _printers():
@@ -1297,7 +1311,7 @@ class Handler(BaseHTTPRequestHandler):
                 AUTO.scan()
                 return self.send_json({"ok": True})
             if path == "/api/printers/use":                  # {kind, ip}: use this printer found on the network
-                use_printer(str(b.get("kind") or ""), str(b.get("ip") or ""))
+                use_printer(str(b.get("kind") or ""), str(b.get("key") or b.get("ip") or ""))
                 return self.send_json({"ok": True})
             if path == "/api/update/run":                    # Fedora: Update now (no local changes only)
                 run_update_now()

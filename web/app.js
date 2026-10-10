@@ -946,11 +946,12 @@ function showPrinterCards(p) {
 const MODEL = { "550T": "LabelWriter 550 Turbo", "550": "LabelWriter 550", "5XL": "LabelWriter 5XL" };
 function showNetwork(n) {
   if (!n) return;
-  const offers = new Map(n.offers.map(o => [o.ip, o]));
+  const offers = new Map(n.offers.map(o => [o.ip || o.uri || o.name, o]));
   const rows = n.found.map(f => {
-    const o = offers.get(f.ip), what = f.model === "5XL" ? "shipping labels" : "tags";
-    const btn = o ? ` <button class="linkish" data-use="${o.kind}" data-ip="${esc(f.ip)}">Use for ${what}</button>` : "";
-    return `<li class="${o ? "" : "ok"}">${esc(MODEL[f.model] || f.model)} · ${esc(f.ip)} <span class="hint">${esc(f.name)}${o ? "" : " — in use"}</span>${btn}</li>`;
+    const o = offers.get(f.ip || f.uri || f.name), what = f.model === "5XL" ? "shipping labels" : "tags";
+    const key = f.ip || f.uri || f.name;
+    const btn = o ? ` <button class="linkish" data-use="${o.kind}" data-key="${esc(key)}">Use for ${what}</button>` : "";
+    return `<li class="${o ? "" : "ok"}">${esc(MODEL[f.model] || f.model)}${f.ip ? " · " + esc(f.ip) : ""} <span class="hint">${esc(f.name)}${o ? "" : " — in use"}</span>${btn}</li>`;
   });
   const blocked = n.error ? (CFG.platform === "mac"
       ? "macOS doesn't let LabelDesk look for printers on the network by itself yet (Local Network privacy). Printing works; set printers up with tools/add-printers.sh."
@@ -958,7 +959,7 @@ function showNetwork(n) {
   $("#net-printers").innerHTML = rows.join("") || `<li>${n.scanning ? "Looking…" : !n.auto ? "Looking for printers is off (config.json auto_printers)."
     : blocked || "No DYMO printers announced themselves on this network (they may still print — see the bar at the top)."}</li>`;
   $$("[data-use]").forEach(b => b.onclick = async () => {
-    try { await api("printers/use", { kind: b.dataset.use, ip: b.dataset.ip }); } catch (err) { toast(err.message, true); }
+    try { await api("printers/use", { kind: b.dataset.use, key: b.dataset.key }); } catch (err) { toast(err.message, true); }
     loadPrinters();
   });
 }
