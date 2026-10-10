@@ -1,7 +1,7 @@
 # LabelDesk — hard-won facts (driver, SELinux, CUPS, detection)
 
 ## Hard-won facts (each cost time — keep them true)
-1. **Driver:** Fedora's `dymo-cups-drivers` (1.4.0.5) has NO 550 series. Use DYMO's own source
+1. **Driver** (macOS: DYMO Connect for Mac's, same PPD pages/areas — docs/dev/mac.md)**:** Fedora's `dymo-cups-drivers` (1.4.0.5) has NO 550 series. Use DYMO's own source
    (github.com/dymosoftware/Drivers → `LW5xx_Linux`, pinned commit in install-driver.sh). On current Fedora it needs
    `boost-devel` and `CXXFLAGS="-O2 -include ctime"`. Filter: `raster2dymolw_v2`; PPDs `lw550t.ppd`, `lw5xl.ppd`.
 2. **SELinux** (enforcing) blocks the filter's print lock (boost named_mutex → `/dev/shm/sem.*`): every job fails with

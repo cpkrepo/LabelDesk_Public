@@ -22,6 +22,8 @@ web/                 index.html · app.js (canvas rendering at 300 dpi, Code 128
                      detect.js (finds the label on a carrier page + which way is up) · template.js (.dymo import +
                      render, incl. embedded pictures) · style.css. Shop logo: per PC in the config folder
                      (GET/POST /api/logo, /api/logo/clear), migrated once from an old web/tag-logo.png
+tools/mac/                macOS: install-all · add-printers (DYMO Connect for Mac's PPDs) · install-app (LaunchAgent +
+                          ~/Applications/LabelDesk.app) · doctor — tools/install-all|add-printers|install-app|doctor.sh exec these on Darwin
 tools/install-driver.sh   builds + installs DYMO's official 550-series CUPS driver, + SELinux module
 tools/selinux/dymo_cups.te
 tools/add-printers.sh     the two DYMO queues (by name via dnssd if found, else socket://IP:9100) + the
@@ -30,6 +32,7 @@ tools/add-printers.sh     the two DYMO queues (by name via dnssd if found, else 
 tools/doctor.sh           health check (driver, SELinux, CUPS queues, printers answering, app); --fix repairs safe things
 tools/install-app.sh      systemd --user service + app-menu entry (run from the checkout; update.sh re-runs it)
 tools/dymo-status.py      READ-ONLY 32-byte status of a networked 550/5XL (ESC A 0); --save/--compare to find a label counter
+.github/workflows/macos.yml  every push: unit tests on macOS's python3 3.9 + bash 3.2, DYMO Connect for Mac, install-all.sh, print_check.py
 .github/workflows/windows-installer.yml  on tag v*: unit tests, tools/build-windows.sh, MSI + .sha256 → GitHub release
 tools/package-skills.sh   .claude/skills → dist/skills/<skill>.zip for Claude.ai upload (checks name/description limits)
 windows/printer-check.ps1 READ-ONLY Windows network/printer diagnostic (Wi-Fi vs wired, Public profile, tcp 9100, drivers)
@@ -37,6 +40,8 @@ windows/add-dymo-printer.ps1  add/remove a DYMO printer by IP (raw 9100 + DYMO C
 tools/rollback.sh         list versions / publish an older version's code as the next version (rulesets forbid force-push + tag deletion)
 tools/update.sh           commit this PC's changes → rebase on GitHub main → bump VERSION → tests → push + tag → restart
 tests/test_server.py      unit tests (no printer): python3 -m unittest discover -s tests
+tests/test_mac_paths.py   macOS paths run anywhere: grey → exact-size PDF for lp, Update now without systemd, Keychain
+tests/print_check.py      end-to-end: print a tag + 4×6 pattern through a RUNNING LabelDesk to the fake printer, check size/margins/orientation
 tests/test_rollback.py    tools/rollback.sh against the same throwaway repos
 tests/test_update.py      tools/update.sh against a throwaway bare repo + two clones (no network)
 tests/render_check.sh     headless-Chrome render + zbarimg barcode check (built-in tag, logo, offset, imported template)

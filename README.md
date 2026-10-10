@@ -1,60 +1,103 @@
 # LabelDesk
 
-Print DYMO labels from **Fedora** or **Windows 11**: a replacement for DYMO Connect built for a repair shop.
+**LabelDesk prints the shop's DYMO labels — inventory tags and 4″ × 6″ shipping labels — from Windows, macOS or
+Fedora.** It replaces DYMO Connect with a small app built around what a repair shop actually prints: type a ticket
+number and press Enter for a tag, or drop in a UPS/FedEx label and it comes out upright and the right size.
 
-- **Inventory tags** on the LabelWriter **550 Turbo** (30252 Address, 1⅛″ × 3½″; 30321 Large Address in Settings): type the ticket # (with **ConnectWise**
-  connected, the company and customer name fill in; setup for the admin in `docs/connectwise-setup.md`), optional
-  barcode of the ticket number, Enter to print, batch printing, reprint from history. Or import your own DYMO Connect
-  `.dymo` tag template (Layout → Import .dymo…; pictures in it print too). **Blank tag:** click the preview and type
-  any text (Ctrl+Enter prints). Your shop logo goes on the tag from Settings → Tag logo (kept per PC, not in this repo).
-- **Shipping labels** on the LabelWriter **5XL** (4" × 6"): paste a screenshot (Ctrl+V) or drop the carrier's PDF.
-  The label is found (UPS and FedEx pages), turned upright and fitted; adjust with ↺ ↻ 180° or by dragging a box.
-- The preview is exactly what prints (drawn at the printers' 300 dpi).
+It runs entirely on your own computer, opens in your browser at http://127.0.0.1:8792, and prints straight to the two
+network printers. No account, no server, nothing about your labels leaves the PC.
 
-**Technicians: the full guide is [SETUP.md](SETUP.md)** (install, printers on Wi-Fi, Claude Code and the skills,
-GitHub access, shipping changes, Windows releases, uninstalling).
+## What it does
 
-## Install on Fedora (once per PC)
+- **Inventory tags** on the LabelWriter **550 Turbo** (30252 Address, 1⅛″ × 3½″; 30321 Large Address in Settings).
+  Type the ticket number — with **ConnectWise** connected, the company and customer fill in by themselves (setup for
+  the admin: [docs/connectwise-setup.md](docs/connectwise-setup.md)). Optional barcode of the ticket number, batch
+  printing, reprint from history, your shop logo (Settings → Tag logo, kept per PC). Import your own DYMO Connect
+  `.dymo` template (Layout → Import .dymo…), or click the preview and type anything for a **blank tag**.
+- **Shipping labels** on the LabelWriter **5XL** (4″ × 6″). Paste a screenshot, drop the carrier's PDF, or just
+  download it — LabelDesk finds the label on the page, turns it upright, fits it, and checks the barcode scans before it
+  prints. Adjust with ↺ ↻ 180° or by dragging a box.
+- **The preview is exactly what prints** — it's drawn at the printers' own 300 dpi.
+- **Follows every job** until the printer has finished, and explains problems in plain English (out of labels, paused,
+  printer not answering) with a Resume / Print again button.
+- **Updates itself** from this repo, and anyone in the shop can improve it with Claude Code (see below).
+
+## Install
+
+You need the two DYMO printers on the shop network and, on Windows and Mac, DYMO's own software installed once (LabelDesk
+prints through DYMO's driver). Pick your computer:
+
+### Windows 11
+1. Install **[DYMO Connect for Desktop](https://www.dymo.com/support?cfid=online-support-sw-downloads)** and add both
+   printers in it. Can't find them (often on Wi-Fi)? See [SETUP.md section 3](SETUP.md#3-printers-that-cant-be-found-wi-fi-windows).
+2. Download **`LabelDesk-<version>.msi`** from the **[latest release](https://github.com/cpkrepo/LabelDesk_Public/releases/latest)**
+   and run it. No admin rights needed.
+3. Start menu → **LabelDesk**. It also starts in the background when you log in.
+
+### macOS (14 Sonoma or newer)
+1. Install **[DYMO Connect for Mac](https://www.dymo.com/support?cfid=online-support-sw-downloads)** (it installs the
+   driver for the 550 Turbo and 5XL). You don't need to add the printers in it.
+2. Open **Terminal** and paste:
+   ```bash
+   xcode-select --install 2>/dev/null; git clone https://github.com/cpkrepo/LabelDesk_Public.git ~/LabelDesk_Public && cd ~/LabelDesk_Public && tools/install-all.sh
+   ```
+   The first command installs Apple's developer tools (git + Python) if they're missing — click **Install** in the
+   window that pops up, then paste the line again. `install-all.sh` finds both printers on the network (or asks for
+   their IP addresses), asks for your Mac password once to add them, installs the app and runs a health check.
+3. Open **LabelDesk** from Launchpad or Spotlight. It starts by itself when you log in.
+
+### Fedora Linux
+Paste in a terminal:
 ```bash
-git clone https://github.com/cpkrepo/LabelDesk_Public.git ~/LabelDesk_Public && cd ~/LabelDesk_Public
-tools/install-all.sh                         # driver + printers (found by name) + app + health check
-#   = tools/install-driver.sh · tools/add-printers.sh [<550-Turbo-IP> <5XL-IP>] · tools/install-app.sh · tools/doctor.sh
+sudo dnf install -y git && git clone https://github.com/cpkrepo/LabelDesk_Public.git ~/LabelDesk_Public && cd ~/LabelDesk_Public && tools/install-all.sh
 ```
-Open **LabelDesk** from the app menu (or http://127.0.0.1:8792). Already running LabelDesk from an unzipped folder?
-Clone as above and run `tools/install-app.sh` from the clone; the app then runs from the clone (history and settings
-are kept, they live in your home folder). Delete the old folder afterwards.
+This builds DYMO's official 550-series driver, adds the two printers (found by name, or give their IPs:
+`tools/add-printers.sh <550-Turbo-IP> <5XL-IP>`), installs the app and runs a health check. Then open **LabelDesk**
+from the app menu.
 
-## Windows 11
-Run **LabelDesk-<version>.msi** (from the Releases page, or `tools/build-windows.sh` on Fedora). No admin rights needed;
-it prints through the DYMO driver that **DYMO Connect** already installed. Start menu → **LabelDesk**.
-Printers not found (often on Wi-Fi)? `printer-check.ps1` and `add-dymo-printer.ps1`: SETUP.md section 3.
+### After installing (every computer)
+- **Settings → Tag labels** must match the roll in the 550 Turbo (the shop's is **30252**).
+- **Settings → Tag logo** → Choose logo… if you want the shop logo on tags.
+- Give both printers a DHCP reservation in the router so their addresses don't change.
+
+The full guide for technicians (printers that can't be found, GitHub access, publishing installers) is
+**[SETUP.md](SETUP.md)**.
 
 ## Updates
-After every print LabelDesk asks GitHub for the newest version number (one small file; nothing about your labels is
-sent). If there's a newer one it shows a notice:
-- **Fedora:** click **Update now** (when this PC has no changes of its own), or run `tools/update.sh` in the clone,
-  which keeps anything changed on this PC: commits it, merges it onto the
-  newest version, raises the version, runs the tests and pushes it back to GitHub, then restarts LabelDesk. If both
-  sides changed the same lines it stops without changing anything and says so. New files that aren't source code
-  (PDFs, images, .dymo, databases) are never committed: the repo is public.
-- **Windows:** click **Install update**. LabelDesk downloads the new installer from the GitHub release, checks its
-  SHA-256, installs it (no admin) and restarts. GitHub builds that installer by itself for every new version.
+After each print LabelDesk asks GitHub for the newest version number (one small file; nothing about your labels is
+sent) and shows a notice when there's a newer one:
+- **Windows:** **Install update** — downloads the installer from the release, checks its SHA-256, installs, restarts.
+- **Mac and Fedora:** **Update now** — or run `tools/update.sh` in `~/LabelDesk_Public` if this computer has changes of
+  its own (they're merged in and shared, see below).
 
-Turn the check off with `"update_check": false` in `~/.config/labeldesk/config.json` (Windows: `%APPDATA%\LabelDesk\config.json`).
+Turn the check off with `"update_check": false` in the config file: Windows `%APPDATA%\LabelDesk\config.json`,
+Mac `~/Library/Application Support/LabelDesk/config.json`, Fedora `~/.config/labeldesk/config.json`.
 
-## Changing LabelDesk with Claude
-Open Claude Code in the clone. It reads `CLAUDE.md` and the skills in `.claude/skills/` (printer setup, testing,
-DYMO template import) and ships each change through `tools/update.sh`. Pushing needs write access to this repo and
-a signed-in PC (SETUP.md section 5). For Claude.ai chat, `tools/package-skills.sh` makes uploadable skill ZIPs.
+## Improving LabelDesk together (Claude Code)
+Anyone with write access to this repo can change LabelDesk. Open **Claude Code** in `~/LabelDesk_Public` and ask for
+what you want. It follows `CLAUDE.md` and the skills in `.claude/skills/` (printer setup, testing, DYMO templates,
+rollback), tests the change, and ships it with `tools/update.sh`. Every PC then gets it with its next update; Windows
+installers are built automatically. Getting access and signing in: [SETUP.md section 5](SETUP.md#5-before-your-first-change-github-access).
+
+**A new version is worse? Roll it back** — ask Claude Code to "roll LabelDesk back", or run `tools/rollback.sh` to
+list versions and `tools/rollback.sh 0.7.1 "what was wrong"` to put an older version back for everyone. Nothing is lost:
+GitHub keeps every version and refuses changes that would rewrite the history.
 
 ## If something doesn't print
-`tools/doctor.sh` checks everything and says what's wrong (`--fix` repairs what's safe). More in
-`.claude/skills/labeldesk-printer-setup/SKILL.md`.
+Run `tools/doctor.sh` in `~/LabelDesk_Public` (Mac and Fedora): it checks the driver, printers and app and says what's
+wrong; `--fix` repairs the safe things. On Windows: LabelDesk → Settings → **DYMO printers by IP** → Check. More in
+[.claude/skills/labeldesk-printer-setup/SKILL.md](.claude/skills/labeldesk-printer-setup/SKILL.md).
+
+## Uninstall
+- **Windows:** Settings → Apps → LabelDesk → Uninstall.
+- **Mac / Fedora:** `tools/install-app.sh --remove` in `~/LabelDesk_Public`, then delete that folder. The printers stay
+  for other apps (remove them in System Settings → Printers or `lpadmin -x Dymo-550-Turbo`).
 
 ## Development
+Standard-library Python and plain JavaScript — no build step, no third-party packages. Tests:
 `python3 -m unittest discover -s tests` · `node --test tests/*.mjs` · `tests/render_check.sh` · `tests/browser_check.sh`.
-Standard-library Python + plain JS, no build step, no third-party packages. Code map: `docs/dev/layout.md`.
+Every push runs the unit tests and a real print through DYMO's Mac driver on a Mac (Actions → macOS); every version
+tag builds the Windows installer. Code map: [docs/dev/layout.md](docs/dev/layout.md).
 
 ## License
 MIT (see [LICENSE](LICENSE)). No shop logo is included; each PC sets its own in Settings.
-Uninstall: `tools/install-app.sh --remove` (Fedora) or Settings → Apps (Windows).

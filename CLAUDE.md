@@ -1,5 +1,6 @@
 # LabelDesk — brief (loaded every turn: keep it tiny; detail in docs/dev/)
-DYMO label printing for the shop on Fedora (http://127.0.0.1:8792) and Windows 11 (per-user .msi), replacing DYMO Connect.
+DYMO label printing for the shop on Fedora, macOS (both: git clone + CUPS, http://127.0.0.1:8792) and Windows 11 (per-user
+.msi), replacing DYMO Connect. macOS: tools/mac/ (tools/*.sh hand off there), docs/dev/mac.md.
 Several technicians run it and change it with Claude; this checkout is a clone of the PUBLIC repo
 github.com/cpkrepo/LabelDesk_Public. Read only what the task needs: docs/dev/layout.md (code map, tests) ·
 docs/dev/facts.md (driver, SELinux, CUPS tiling, 550 handshake, label detection) · docs/dev/windows.md (build, test VM,

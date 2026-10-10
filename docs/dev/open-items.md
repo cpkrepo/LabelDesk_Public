@@ -57,3 +57,6 @@
       each with `ObjectLayout` `DYMOPoint X/Y` + `Size Width/Height` in INCHES, fonts in points, `BarcodeFormat` e.g.
       `Code128Auto`. Test fixtures: DYMO's SDK samples; acceptance = the owner's own tag template (not seen yet).
 - [ ] Later: general label designer (text/barcode/QR/image objects, templates per size), `.dymo` import, CSV batch.
+- [ ] **macOS on the real printers**: CI proves the Mac driver path against the fake LabelWriter; print a tag (long name +
+      barcode) and a real UPS label from a Mac in the shop, scan both. Check DYMO Connect for Mac's CURRENT version has
+      the same lw550t/lw5xl PPDs (CI uses 1.4.3.103, the newest downloadable by URL).

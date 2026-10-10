@@ -71,6 +71,6 @@ rm -rf "$tmp"
 
 launchctl bootout "gui/$uid" "$PLIST" 2>/dev/null || true
 launchctl bootstrap "gui/$uid" "$PLIST"
-for _ in 1 2 3 4 5 6 7 8 9 10; do curl -sf --max-time 2 "$URL/api/config" >/dev/null && break; sleep 1; done
+for _ in $(seq 1 45); do curl -sf --max-time 2 "$URL/api/config" >/dev/null && break; sleep 1; done   # first start can be slow
 curl -sf --max-time 2 "$URL/api/config" >/dev/null && echo "LabelDesk running: $URL (Launchpad / Spotlight: LabelDesk)" \
   || { echo "didn't start — tail $LOG"; exit 1; }

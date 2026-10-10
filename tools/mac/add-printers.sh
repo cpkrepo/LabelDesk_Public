@@ -36,5 +36,5 @@ add() { # queue uri ppd description page
 echo "Adding the queues (asks for your Mac password)…"
 add Dymo-550-Turbo "$t_uri" lw550t "DYMO LabelWriter 550 Turbo (inventory tags)" w79h252
 add Dymo-5XL "$x_uri" lw5xl "DYMO LabelWriter 5XL (shipping)" 1744907_4_in_x_6_in
-lpstat -v Dymo-550-Turbo Dymo-5XL
+lpstat -v | grep -E 'Dymo-(550-Turbo|5XL):'
 echo "Queues ready. Check everything with tools/doctor.sh"

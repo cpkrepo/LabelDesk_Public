@@ -4,6 +4,7 @@ Everything a technician needs, in order. The short version is in README.md.
 
 1. [Install LabelDesk on Fedora](#1-install-labeldesk-on-fedora)
 2. [Install LabelDesk on Windows](#2-install-labeldesk-on-windows)
+   · [on a Mac](#install-labeldesk-on-a-mac)
 3. [Printers that can't be found (Wi-Fi, Windows)](#3-printers-that-cant-be-found-wi-fi-windows)
 4. [Claude: Claude Code and the skills](#4-claude-claude-code-and-the-skills)
 5. [Before your first change: GitHub access](#5-before-your-first-change-github-access)
@@ -56,6 +57,30 @@ Open **LabelDesk** from the app menu (or http://127.0.0.1:8792). Then, once per 
 5. Optional: Settings → **Add the Shipping Label printer** (asks for an administrator) so you can print a UPS/FedEx
    page from the browser straight into LabelDesk.
 
+### Install LabelDesk on a Mac
+
+macOS 14 (Sonoma) or newer, Intel or Apple silicon. LabelDesk prints through the driver that DYMO Connect for Mac
+installs, and runs from a clone of this repo like on Fedora (same `tools/update.sh`, same Claude Code workflow).
+
+1. Install **DYMO Connect for Mac** from DYMO's download page
+   (https://www.dymo.com/support?cfid=online-support-sw-downloads). Adding the printers in it is optional.
+2. In **Terminal**:
+   ```bash
+   xcode-select --install          # git + python3 from Apple; click Install, wait, skip if "already installed"
+   git clone https://github.com/cpkrepo/LabelDesk_Public.git ~/LabelDesk_Public
+   cd ~/LabelDesk_Public && tools/install-all.sh          # or: tools/install-all.sh <550-Turbo-IP> <5XL-IP>
+   ```
+   It checks the DYMO driver, adds the queues **Dymo-550-Turbo** and **Dymo-5XL** (asks for your Mac password),
+   installs a LaunchAgent that runs LabelDesk at login plus **LabelDesk.app** in `~/Applications`, and runs
+   `tools/doctor.sh`.
+3. Open **LabelDesk** from Launchpad or Spotlight. Then Settings → **Tag labels** (30252) and **Tag logo**, as on Fedora.
+
+Mac notes: settings, history and the logo live in `~/Library/Application Support/LabelDesk`, the log in
+`~/Library/Logs/LabelDesk.log`, ConnectWise keys in the login Keychain ("LabelDesk ConnectWise"). There's no
+"Shipping Label" print-dialog printer on the Mac: in a carrier's print dialog choose **PDF → Save as PDF** into
+Downloads and LabelDesk opens it by itself. `brew install zbar` (optional) adds a second barcode check; without it the
+browser checks barcodes, as on Windows.
+
 ## 3. Printers that can't be found (Wi-Fi, Windows)
 
 The printers are on wired Ethernet. A Windows PC on Wi-Fi may not see them in DYMO Connect or "Add a printer". Find
@@ -98,7 +123,7 @@ DYMO Connect template). `CLAUDE.md` tells Claude how the project works and how t
 
 **Claude Code (recommended for changing LabelDesk).** Needs a Claude plan that includes Claude Code.
 ```bash
-curl -fsSL https://claude.ai/install.sh | bash        # Fedora; on Windows PowerShell: irm https://claude.ai/install.ps1 | iex
+curl -fsSL https://claude.ai/install.sh | bash        # Fedora and Mac; on Windows PowerShell: irm https://claude.ai/install.ps1 | iex
 cd ~/LabelDesk_Public && claude                       # sign in the first time
 ```
 Start it **inside the clone**: it then reads `CLAUDE.md` and loads the three skills by itself, nothing to install.
@@ -127,7 +152,8 @@ When a skill changes in the repo, Claude Code picks it up on the next start; Cla
    ```
 3. **Sign this PC in to GitHub** so pushes work:
    ```bash
-   sudo dnf install -y gh && gh auth login && gh auth setup-git
+   sudo dnf install -y gh && gh auth login && gh auth setup-git          # Fedora
+   brew install gh && gh auth login && gh auth setup-git                 # Mac (or the .pkg from cli.github.com)
    ```
    Choose GitHub.com, HTTPS, and log in with the browser.
 
@@ -181,14 +207,16 @@ Upload the `.sha256` too: Install update refuses an installer without a matching
 
 - **Update notice.** After every print LabelDesk fetches the newest version number from GitHub (one small file;
   nothing about your labels is sent).
-  - **Fedora, no changes of your own:** **Update now**. LabelDesk updates and restarts itself (about a minute); the
+  - **Fedora and Mac, no changes of your own:** **Update now**. LabelDesk updates and restarts itself (about a minute); the
     page reloads. If it doesn't, the notice shows the end of the log and the command to run.
-  - **Fedora with your own changes:** the notice shows `tools/update.sh` to run in a Terminal, so your changes get merged
+  - **Fedora and Mac with your own changes:** the notice shows `tools/update.sh` to run in a Terminal, so your changes get merged
     and pushed (section 6).
   - **Windows:** **Install update** downloads the installer from the release, checks its SHA-256, installs it and
     restarts LabelDesk. Settings, history and the logo are kept.
 - **Turn the check off:** add `"update_check": false` to `~/.config/labeldesk/config.json`
-  (Windows: `%APPDATA%\LabelDesk\config.json`) and restart LabelDesk.
+  (Mac: `~/Library/Application Support/LabelDesk/config.json`; Windows: `%APPDATA%\LabelDesk\config.json`) and restart LabelDesk.
+- **Uninstall on a Mac:** `tools/install-app.sh --remove`, then delete `~/LabelDesk_Public` (history stays in
+  `~/Library/Application Support/LabelDesk`). The printer queues and DYMO Connect stay.
 - **Uninstall on Fedora:** `tools/install-app.sh --remove` (history stays in `~/.local/share/labeldesk`; delete that
   folder too to remove everything), then delete the clone. The printer queues and driver stay for other apps.
 - **Uninstall on Windows:** Settings → Apps → LabelDesk → Uninstall.

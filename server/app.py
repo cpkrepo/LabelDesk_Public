@@ -930,7 +930,7 @@ def main():
     global INBOX
     cfg = config()
     dl = os.environ.get("LABELDESK_DOWNLOADS") or downloads_dir()
-    dirs = [(SPOOL, True)] + ([(dl, False)] if cfg["watch_downloads"] else [])
+    dirs = ([] if MAC else [(SPOOL, True)]) + ([(dl, False)] if cfg["watch_downloads"] else [])   # Mac: no print-dialog printer
     INBOX = Inbox(dirs)
     threading.Thread(target=INBOX.run, daemon=True).start()
     try:
