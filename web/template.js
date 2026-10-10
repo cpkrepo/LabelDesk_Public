@@ -7,7 +7,7 @@
 // Import guesses them from the object names / sample text; the user checks them in the template panel.
 // Templates live per PC (localStorage), like Rotate 180° and the text position.
 
-const FIELDS = ["company", "customer", "received", "ticket"];
+const FIELDS = ["company", "customer", "received", "ticket", "serial", "bin", "item"];
 const DPI = 300;
 const FONT_STACK = '"DejaVu Sans", "Liberation Sans", Arial, sans-serif';
 
@@ -123,6 +123,10 @@ export function guessFormat(name, text, barcode) {
   const DATE = /\d{1,2}\/\d{1,2}\/\d{2,4}/;
   if (/receiv|date/.test(n) || has(DATE) || has(/receiv/i))                 // "Received: 09/30/2026" → "Received: {received}"
     return has(DATE) ? text.replace(DATE, "{received}") : has(/receiv/i) ? `${text.trimEnd()} {received}` : "{received}";
+  if (/serial|s\/n|\bsn\b/.test(n) || has(/^\s*(s\/n|serial)/i))            // "S/N: PF3XK2LQ" → "S/N: {serial}"
+    return has(/^\s*(s\/n|serial)[^:]*:/i) ? text.replace(/(:\s*).*$/s, "$1{serial}") : "{serial}";
+  if (/\bbin\b|shelf|location/.test(n)) return has(/:/) ? text.replace(/(:\s*).*$/s, "$1{bin}") : "{bin}";
+  if (/accessor|item|part/.test(n)) return "{item}";
   if (/contact|customer|person/.test(n)) return "{customer}";
   if (/company|client|name|address/.test(n)) return "{company}";
   return text;                                                             // static text (shop name, notes…)
@@ -133,7 +137,8 @@ export function drawTemplate(ctx, tpl, f, DW, DH, { drawBarcode, usDate }) {
   const r = tpl.rect || { x: 0, y: 0, w: DW / DPI, h: DH / DPI };
   const s = Math.min(DW / (r.w * DPI), DH / (r.h * DPI));                 // DYMO's printable rect → ours (≈ 1)
   const px = v => v * DPI * s;
-  const values = { company: f.customer || "", customer: f.contact || "", received: usDate(f.received), ticket: f.ticket || "" };
+  const values = { company: f.customer || "", customer: f.contact || "", received: usDate(f.received), ticket: f.ticket || "",
+                   serial: f.serial || "", bin: f.bin || "", item: f.item ? `${f.item}${f.part ? ` (${f.part})` : ""}` : (f.part || "") };
   const fill = fmt => fmt.replace(/\{(\w+)\}/g, (m, k) => (k in values ? values[k] : m));
   ctx.fillStyle = "#000"; ctx.textBaseline = "alphabetic";
   for (const o of tpl.objects) {
@@ -147,6 +152,14 @@ export function drawTemplate(ctx, tpl, f, DW, DH, { drawBarcode, usDate }) {
       if (o.scale !== "Fill" && o.scale !== "Stretch") { const k = Math.min(w / iw, h / ih); dw = iw * k; dh = ih * k; }
       const dx = o.halign === "Left" ? x : o.halign === "Right" ? x + w - dw : x + (w - dw) / 2;
       ctx.drawImage(e.bw, dx, y + (h - dh) / 2, dw, dh);
+      continue;
+    }
+    if (o.kind === "shape") {                                              // designer: line / box / filled box
+      const t = Math.max(1, Math.round((o.stroke || 0.02) * DPI * s));
+      if (o.shape === "fill") ctx.fillRect(x, y, w, h);
+      else if (o.shape === "box") { ctx.lineWidth = t; ctx.strokeRect(x + t / 2, y + t / 2, w - t, h - t); }
+      else if (w >= h) ctx.fillRect(x, y + (h - t) / 2, w, t);                // a line: across the longer side of its box
+      else ctx.fillRect(x + (w - t) / 2, y, t, h);
       continue;
     }
     if (o.kind === "barcode") {

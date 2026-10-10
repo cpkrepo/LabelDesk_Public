@@ -1,0 +1,39 @@
+#!/bin/bash
+# LabelDesk.pkg (unsigned): installs LabelDesk for the person logged in at the Mac — a git clone in ~/LabelDesk_Public
+# (updates: Update now / tools/update.sh, like a Terminal install), the LaunchAgent + LabelDesk.app. Printers set
+# themselves up (through CUPS). Runs as root from Installer; everything user-side runs as that user.
+REPO_URL="@REPO_URL@"
+BRANCH="@BRANCH@"
+user=$(stat -f%Su /dev/console)
+home=$(dscl . -read "/Users/$user" NFSHomeDirectory 2>/dev/null | awk '{print $2}')
+log=/tmp/labeldesk-install.log
+exec >>"$log" 2>&1
+echo "== $(date) LabelDesk installer for $user ($home), branch $BRANCH"
+say_to_user() { # a dialog in the user's session (Installer shows only "failed")
+  sudo -u "$user" osascript -e "display dialog \"$1\" with title \"LabelDesk\" buttons {\"OK\"} default button 1 with icon caution giving up after 120" >/dev/null 2>&1 || true
+}
+if [ -z "$user" ] || [ "$user" = root ] || [ ! -d "$home" ]; then echo "no user logged in"; exit 1; fi
+
+# Apple's command line tools give git and python3
+if ! xcode-select -p >/dev/null 2>&1 || ! sudo -u "$user" /usr/bin/python3 -c 'import sys' >/dev/null 2>&1; then
+  sudo -u "$user" xcode-select --install >/dev/null 2>&1 || true
+  say_to_user "LabelDesk needs Apple's developer tools (git and Python). A window to install them just opened — click Install, wait until it's done, then open the LabelDesk installer again."
+  exit 1
+fi
+# DYMO's driver comes with DYMO Connect for Mac (LabelDesk still installs; printers are added once the driver is there)
+if [ ! -f /Library/Printers/PPDs/Contents/Resources/lw550t.ppd.gz ]; then
+  sudo -u "$user" open "https://www.dymo.com/support?cfid=online-support-sw-downloads" || true
+  say_to_user "Also install DYMO Connect for Mac (its download page just opened) — LabelDesk prints through DYMO's driver. LabelDesk sets the printers up by itself once it's installed."
+fi
+
+dir="$home/LabelDesk_Public"
+as_user() { sudo -u "$user" -H "$@"; }
+if [ -d "$dir/.git" ]; then
+  echo "existing clone: updating"
+  (cd "$dir" && as_user tools/update.sh) || echo "update.sh reported a problem (local changes?) — keeping the clone as it is"
+else
+  as_user git clone --quiet --branch "$BRANCH" "$REPO_URL" "$dir" || { say_to_user "Couldn't download LabelDesk from GitHub — check the internet connection and try again."; exit 1; }
+fi
+cd "$dir" && as_user tools/mac/install-app.sh || { say_to_user "LabelDesk didn't start — details in $log"; exit 1; }
+as_user open "$home/Applications/LabelDesk.app" || true
+echo "== done"
