@@ -9,7 +9,7 @@ the owner's `tools/update.sh` turns that heading into the version number when it
 ## Unreleased
 
 ## 0.9.1 — 2026-10-10
-- **Customer name goes after the company** on the tag's top line — "Destify - Chris Killion" — instead of a line
+- **Customer name goes after the company** on the tag's top line — "Acme Dental Group - Jane Smith" — instead of a line
   of its own. A home customer's name is the company, so it isn't printed twice.
 
 ## 0.9.0 — 2026-10-10

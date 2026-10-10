@@ -5,8 +5,8 @@
   via `na.myconnectwise.net/login/companyinfo/{companyId}` when it answers). Auth: Basic `companyId+public:private`
   + `clientId` header. **The shop owner administers ConnectWise**; the user has no System menu → setup via
   docs/connectwise-setup.md. Read-only role; LabelDesk never writes to ConnectWise (ask before adding any write).
-- Tag = **company name** (bold), with the optional **customer name** after it on the same line ("Destify - Chris
-  Killion"; contact; "On the tag" checkbox, remembered per PC; left off when the company already is that name — a home
+- Tag = **company name** (bold), with the optional **customer name** after it on the same line ("Acme Dental Group -
+  Jane Smith"; contact; "On the tag" checkbox, remembered per PC; left off when the company already is that name — a home
   customer's company IS their name) + Received + Ticket#. Ticket # is the first field; lookup 450 ms after typing; fields typed by hand are never replaced.
 - **Optional and invisible unless ON** (owner must approve it; LabelDesk must work fully without it): `on` = keys stored
   AND a live read-only check passes (cached 10 min). Off → no ConnectWise text anywhere, no ConnectWise calls at all.
