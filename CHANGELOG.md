@@ -7,6 +7,16 @@ installer attached) and any of them can be brought back with `tools/rollback.sh 
 the owner's `tools/update.sh` turns that heading into the version number when it publishes.
 
 ## Unreleased
+- **Label designer** (new Designer tab): any of the 65 DYMO labels the 550 Turbo and 5XL take — text, fields that fill
+  in when printing ({company}, {ticket}, {serial}…), every barcode type, pictures, lines and boxes; drag to place,
+  corner to resize. Save layouts on the PC, make a tag-sized one the inventory tag's layout, export/import (.json or a
+  DYMO .dymo file), or **Share with the shop** — the owner approves it and every PC gets it.
+- **Mac installer package:** every release has a `LabelDesk-<version>.pkg` — open it (right-click → Open the first
+  time; it isn't signed by Apple) and LabelDesk installs itself, no Terminal. Updates work as before.
+- **Been here before?** A serial typed or scanned at intake shows this PC's earlier tickets for that device (and
+  whether it was picked up); with ConnectWise on, its configuration too — the company fills in by itself.
+- **Scan a tag** (History): scan a tag's ticket barcode to see every tag printed for it (device, accessories, serial,
+  bin), the ConnectWise ticket status, and **Mark picked up** (kept on this PC; ConnectWise is never changed).
 - **Batch from a spreadsheet:** Batch → Open spreadsheet… takes an Excel .xlsx or CSV (any export), guesses which column
   is the ticket #, company, customer, date, serial, bin and accessories (change any), previews it and prints a tag set
   per row — stopping at the first problem so nothing is skipped silently.
@@ -25,8 +35,8 @@ the owner's `tools/update.sh` turns that heading into the version number when it
   filters for tags/shipping and dates, **Show more** for older labels, and **Export CSV** for Excel.
 - **Paused printers resume by themselves** once they answer again (Fedora and Mac), and Settings → Printers shows each
   printer's state, roll and labels left.
-- **Printers set themselves up** (Fedora; on the Mac, macOS doesn't allow it from the background yet, and on Windows it's
-  untested — Settings says when it can't look). When LabelDesk starts and every few minutes it looks for the DYMO
+- **Printers set themselves up** on Fedora and the Mac (on the Mac through CUPS, by the printer's Bonjour name); on
+  Windows LabelDesk finds them through Windows' own Bonjour and offers **Use for…** (adding a printer needs an admin). When LabelDesk starts and every few minutes it looks for the DYMO
   printers on the network: a printer it finds for the first time is set up, and a printer that got a new address is followed — no more
   `add-printers.sh` after a router restart. Other DYMO printers it finds are listed in Settings → Printers on the network
   with a "Use for…" button (Windows: always a button, it needs an admin prompt).

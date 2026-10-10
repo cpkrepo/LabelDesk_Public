@@ -7,14 +7,14 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const DPI = 300;
 let CFG = null;
 
-async function api(path, body) {
+export async function api(path, body) {
   const r = await fetch("/api/" + path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw Object.assign(new Error(d.error || r.statusText), { status: r.status, data: d });
   return d;
 }
 let toastT;
-function toast(msg, bad = false) {
+export function toast(msg, bad = false) {
   const t = $("#toast"); t.textContent = msg; t.className = bad ? "bad" : ""; t.hidden = false;
   clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, bad ? 7000 : 3000);
 }
@@ -40,7 +40,7 @@ function fit(ctx, text, maxW, size, min, weight = "700") {
   }
   return min;
 }
-const usDate = iso => { const [y, m, d] = (iso || "").split("-"); return y ? `${m}/${d}/${y}` : ""; };
+export const usDate = iso => { const [y, m, d] = (iso || "").split("-"); return y ? `${m}/${d}/${y}` : ""; };
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
 // ------------------------------------------------------------------ inventory tag (30252 or 30321), drawn across the label's length
@@ -72,6 +72,24 @@ function tagLogo(height = LOGO_H) {
   return bwLogo = c;
 }
 // offsetMm: the whole design (text, barcode, logo) moves down (+) / up (−) — fixes printers that clip the top line
+// any DYMO label from the designer: the canvas is that label's printable area (CUPS places it 1:1, like the tag);
+// "Landscape" layouts run along the label's length and are turned onto the page the way the tag is
+export function drawLabel(canvas, lab, tpl, f = {}) {
+  const [W, H] = area(lab);
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  const turn = tpl.orientation === "Landscape" && H > W;
+  if (turn) { if (!tpl.flip) { ctx.translate(W, 0); ctx.rotate(Math.PI / 2); } else { ctx.translate(0, H); ctx.rotate(-Math.PI / 2); } }
+  else if (tpl.flip) { ctx.translate(W, H); ctx.rotate(Math.PI); }
+  drawTemplate(ctx, tpl, f, turn ? H : W, turn ? W : H, { drawBarcode, usDate });
+  ctx.restore();
+  return canvas;
+}
+export const designSize = (lab, tpl) => { const [W, H] = area(lab); return tpl.orientation === "Landscape" && H > W ? [H, W] : [W, H]; };
+export const getCfg = () => CFG;
+
 export function drawTag(canvas, f, flip = false, offsetMm = tagOffset(), tpl = activeTemplate()) {
   const [W, H] = area(CFG.labels.tag);                        // printable area as fed: 30321 391 × 960, 30252 298 × 962
   canvas.width = W; canvas.height = H;
@@ -221,15 +239,15 @@ function grayOf(canvas) {
 }
 // send one label: resolves when CUPS has it (the bar keeps following it). Double press within 3 s → asks first;
 // a shipping label whose barcode can't be read → "Print anyway" instead of printing a label that won't scan.
-async function printCanvas(kind, canvas, copies, fields, what, { force = false, wait = false } = {}) {
+export async function printCanvas(kind, canvas, copies, fields, what, { force = false, wait = false, stock = null } = {}) {
   if (busy) return false;
   if (copies > 10 && !confirm(`Print ${copies} copies?`)) return false;
   busy = true; $$("button.primary").forEach(b => b.disabled = true);
   const png = canvas.toDataURL("image/png");
-  const again = () => printCanvas(kind, canvas, copies, fields, what, { force: true });
+  const again = () => printCanvas(kind, canvas, copies, fields, what, { force: true, stock });
   try {
     let check;
-    if (kind === "ship" && !CFG.barcodeCheck) {                // no zbar on this PC (Windows): check in the browser
+    if (kind === "ship" && !stock && !CFG.barcodeCheck) {      // no zbar on this PC (Windows): check in the browser
       jobbar("Checking the barcode…", "wait");
       check = await checkBarcode(canvas);
       if (!check.ok && !force) {
@@ -239,7 +257,7 @@ async function printCanvas(kind, canvas, copies, fields, what, { force = false, 
     }
     const gray = CFG.platform === "windows" || CFG.platform === "mac" ? grayOf(canvas) : undefined;
     jobbar(`Sending to the ${PRINTER_NAME[kind]}… — ${what}`, "wait");
-    const r = await api("print", { kind, png, gray, check, copies, fields, force: force || Date.now() < forceUntil });
+    const r = await api("print", { kind, png, gray, check, copies, fields, force: force || Date.now() < forceUntil, ...(stock ? { stock } : {}) });
     const label = r.check?.tracking ? `${what} · ${r.check.carrier} ${r.check.tracking}` : what;
     const done = track(r.id, label, kind, again);
     done.then(ok => { if (ok) checkUpdate(); });                // after every print: is there a newer LabelDesk?
@@ -377,8 +395,11 @@ $("#offset-down").onclick = () => nudge(0.25);
 $("#offset-up").onclick = () => nudge(-0.25);
 // ---- tag layout: built-in or an imported DYMO Connect template (.dymo), per PC
 const tplPanel = $("#tpl-panel");
+// tag layouts: imported .dymo templates and designer layouts made for a tag roll (30252 / 30321)
+const TAG_STOCK_IDS = ["w79h252", "w102h252", "w79h252.1", "w79h252.2", "w102h252.1"];
+export const isTagLayout = t => !t.stock || TAG_STOCK_IDS.includes(t.stock);
 function showTemplates() {
-  const list = loadTemplates(), id = activeTemplateId();
+  const list = loadTemplates().filter(isTagLayout), id = activeTemplateId();
   $("#tpl-select").innerHTML = `<option value="">Built-in</option>` + list.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
   $("#tpl-select").value = list.some(t => t.id === id) ? id : "";
   $("#tpl-edit").hidden = $("#tpl-delete").hidden = !$("#tpl-select").value;
@@ -861,7 +882,7 @@ function renderHistory() {
     <td>${h.kind === "tag" ? (h.fields.free != null ? `<i>Blank tag</i> · ${esc(h.fields.free.replace(/\n/g, " / "))}`
         : `<b>${esc(h.fields.customer)}</b> · ${esc(usDate(h.fields.received))} · #${esc(h.fields.ticket)}`)
         : `${h.image ? `<img class="thumb" src="api/history/${h.id}/image" alt="" loading="lazy">` : ""}${h.tracking ? `<b>${esc(h.tracking)}</b> ` : ""}<span class="hint">${esc(h.fields.note || "")}</span>`}</td>
-    <td>${h.copies}</td><td>${state(h)}</td><td><button class="ghost" data-id="${h.id}">Reprint</button></td></tr>`).join("")
+    <td>${h.copies}</td><td>${state(h)}${h.collected ? ` <span class="picked" title="${esc(h.collected.replace("T", " "))}">· picked up</span>` : ""}</td><td><button class="ghost" data-id="${h.id}">Reprint</button></td></tr>`).join("")
     || `<tr><td colspan="6" class="hint">Nothing printed yet.</td></tr>`;
   $$("#history button[data-id]").forEach(b => b.onclick = async () => {
     const h = HIST.find(x => x.id == b.dataset.id);
@@ -884,7 +905,7 @@ function renderHistory() {
 function showTab(t) {
   $$("nav button").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
   $$(".tab").forEach(s => s.hidden = s.id !== "tab-" + t);
-  if (t === "history") loadHistory();
+  if (t === "history") { loadHistory(); setTimeout(() => $("#scan").focus(), 0); }
   if (t === "tag") form.ticket.focus();
   if (t === "settings") loadCW();
   if (t === "ship") drop.focus();
@@ -946,11 +967,12 @@ function showPrinterCards(p) {
 const MODEL = { "550T": "LabelWriter 550 Turbo", "550": "LabelWriter 550", "5XL": "LabelWriter 5XL" };
 function showNetwork(n) {
   if (!n) return;
-  const offers = new Map(n.offers.map(o => [o.ip, o]));
+  const offers = new Map(n.offers.map(o => [o.ip || o.uri || o.name, o]));
   const rows = n.found.map(f => {
-    const o = offers.get(f.ip), what = f.model === "5XL" ? "shipping labels" : "tags";
-    const btn = o ? ` <button class="linkish" data-use="${o.kind}" data-ip="${esc(f.ip)}">Use for ${what}</button>` : "";
-    return `<li class="${o ? "" : "ok"}">${esc(MODEL[f.model] || f.model)} · ${esc(f.ip)} <span class="hint">${esc(f.name)}${o ? "" : " — in use"}</span>${btn}</li>`;
+    const o = offers.get(f.ip || f.uri || f.name), what = f.model === "5XL" ? "shipping labels" : "tags";
+    const key = f.ip || f.uri || f.name;
+    const btn = o ? ` <button class="linkish" data-use="${o.kind}" data-key="${esc(key)}">Use for ${what}</button>` : "";
+    return `<li class="${o ? "" : "ok"}">${esc(MODEL[f.model] || f.model)}${f.ip ? " · " + esc(f.ip) : ""} <span class="hint">${esc(f.name)}${o ? "" : " — in use"}</span>${btn}</li>`;
   });
   const blocked = n.error ? (CFG.platform === "mac"
       ? "macOS doesn't let LabelDesk look for printers on the network by itself yet (Local Network privacy). Printing works; set printers up with tools/add-printers.sh."
@@ -958,7 +980,7 @@ function showNetwork(n) {
   $("#net-printers").innerHTML = rows.join("") || `<li>${n.scanning ? "Looking…" : !n.auto ? "Looking for printers is off (config.json auto_printers)."
     : blocked || "No DYMO printers announced themselves on this network (they may still print — see the bar at the top)."}</li>`;
   $$("[data-use]").forEach(b => b.onclick = async () => {
-    try { await api("printers/use", { kind: b.dataset.use, ip: b.dataset.ip }); } catch (err) { toast(err.message, true); }
+    try { await api("printers/use", { kind: b.dataset.use, key: b.dataset.key }); } catch (err) { toast(err.message, true); }
     loadPrinters();
   });
 }
@@ -1116,3 +1138,53 @@ $("#sheet-print").onclick = async () => {
   }
   st.textContent = ""; loadCustomers(); jobbar(`✓ Printed tags for all ${rows.length} devices`, "ok");
 };
+
+// ---- been here before? (O): a serial that's typed or scanned → this PC's earlier tags with it + ConnectWise's device
+let devSeq = 0;
+async function deviceLookup() {
+  const serial = form.serial.value.trim(), el = $("#dev-info"), seq = ++devSeq;
+  if (serial.length < 4) { el.hidden = true; return; }
+  let d;
+  try { d = await api("device?serial=" + encodeURIComponent(serial)); } catch { return; }
+  if (seq !== devSeq) return;
+  const parts = [];
+  if (d.before.length) parts.push("<b>Been here before:</b> " + d.before.slice(0, 3).map(b =>
+    `#${esc(b.ticket)} · ${esc(b.customer)} · ${esc(usDate(b.at.slice(0, 10)))}${b.collected ? " (picked up)" : " <b>(not picked up)</b>"}`).join("; "));
+  for (const c of d.cw.slice(0, 2)) parts.push(`ConnectWise: <b>${esc(c.company)}</b> · ${esc([c.name, c.manufacturer, c.model].filter(Boolean).join(" · "))}`);
+  if (d.cw.length === 1 && !form.customer.value.trim()) { form.customer.value = d.cw[0].company; drawTagPreview(); }
+  el.innerHTML = parts.join("<br>") || "First time LabelDesk sees this serial.";
+  el.className = "cwinfo" + (d.before.length || d.cw.length ? " ok" : "");
+  el.hidden = false;
+}
+form.serial.addEventListener("change", deviceLookup);
+form.serial.addEventListener("keydown", e => { if (e.key === "Enter") deviceLookup(); });
+
+// ---- History → Scan a tag (P): the scanner types the ticket # + Enter → its tags, ConnectWise status, picked up?
+async function showTicket(n) {
+  const out = $("#scan-out");
+  let t;
+  try { t = await api("ticket/" + encodeURIComponent(n)); } catch (err) { out.hidden = false; out.textContent = err.message; return; }
+  const parts = t.tags.map(h => h.fields.item ? `${esc(h.fields.item)} (${esc(h.fields.part || "")})` : `Device${h.fields.part ? ` (${esc(h.fields.part)})` : ""}`);
+  out.innerHTML = `<h3>Ticket #${esc(t.ticket)}${t.tags[0] ? ` · ${esc(t.tags[0].fields.customer)}` : ""}</h3>` +
+    (t.cw ? `<p class="hint">ConnectWise: ${esc(t.cw.summary)} · <b>${esc(t.cw.status)}</b>${t.cw.contact ? " · " + esc(t.cw.contact) : ""}</p>` : "") +
+    (t.tags.length ? `<table><tr><th>Tag</th><th>Serial #</th><th>Bin</th><th>Printed</th></tr>${t.tags.map((h, i) =>
+      `<tr><td>${parts[i]}</td><td>${esc(h.fields.serial || "")}</td><td>${esc(h.fields.bin || "")}</td><td>${esc(h.at.replace("T", " ").slice(0, 16))}</td></tr>`).join("")}</table>`
+      : `<p class="hint">No tags printed for this ticket on this PC.</p>`) +
+    (t.tags.length ? `<div class="row actions">${t.collected
+      ? `<span class="picked">✓ Picked up ${esc(t.collected.replace("T", " ").slice(0, 16))}</span> <button class="ghost" type="button" id="scan-undo">Undo</button>`
+      : `<button class="primary" type="button" id="scan-pick">Mark picked up</button>`}</div>` : "");
+  out.hidden = false;
+  const mark = async v => { await api(`ticket/${encodeURIComponent(t.ticket)}/collected`, { collected: v }); showTicket(t.ticket); loadHistory(); };
+  if ($("#scan-pick")) $("#scan-pick").onclick = () => mark(true);
+  if ($("#scan-undo")) $("#scan-undo").onclick = () => mark(false);
+}
+$("#scan").addEventListener("keydown", e => {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  const n = $("#scan").value.trim().replace(/^#/, "");
+  if (/^\d{1,10}$/.test(n)) showTicket(n);
+  $("#scan").select();
+});
+
+// the designer made a layout the tag's layout (Designer → Use for inventory tags)
+document.addEventListener("labeldesk:templates", () => { showTemplates(); drawTagPreview(); });

@@ -28,6 +28,7 @@ CONFIGS = {101: [
     {"id": 2, "name": "ACME-LT-07", "type": {"name": "Laptop"}, "serialNumber": "PF2ABC", "modelNumber": "ThinkPad T14",
      "manufacturer": {"name": "Lenovo"}}]}
 TICKET_CONFIGS = {75013: [{"id": 2}]}
+NAMES = {101: "Acme Dental Group"}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -62,6 +63,10 @@ class Handler(BaseHTTPRequestHandler):
         if parts[:2] == ["project", "tickets"] and len(parts) == 3:
             t = PROJECT.get(int(parts[2]))
             return self.reply(200, t) if t else self.reply(404, {"code": "NotFound"})
+        if path == "company/configurations" and q["conditions"][0].startswith("serialNumber="):
+            want = q["conditions"][0].split("=", 1)[1].strip('"').lower()
+            return self.reply(200, [dict(c, company={"id": cid, "name": NAMES[cid]}) for cid, cs in CONFIGS.items()
+                                    for c in cs if c["serialNumber"].lower() == want])
         if path == "company/configurations":
             cid = int(q["conditions"][0].split("company/id=")[1].split()[0])
             if cid == 250:
