@@ -56,8 +56,9 @@ if [ "$everyone" = --everyone ]; then
   echo "✓ every PC goes back to the code of $want with its next update"
   restart; exit 0
 fi
-[ "$(uname)" != Darwin ] || [ "$(printf '%s\n0.8.0\n' "$want" | sort -t. -k1,1n -k2,2n -k3,3n | head -1)" = 0.8.0 ] \
-  || die "LabelDesk runs on the Mac since 0.8.0 — pick 0.8.0 or newer"
+if [ "$(uname)" = Darwin ] && [ -d tools/mac ] && ! git cat-file -e "v$want:tools/mac/install-app.sh" 2>/dev/null; then
+  die "version $want doesn't run on the Mac (LabelDesk runs on the Mac since 0.8.0) — pick a newer one"
+fi
 git checkout --quiet "$BRANCH" 2>/dev/null || true
 git reset --quiet --hard "v$want"                                # main, at the older version (GitHub is untouched)
 hold "$want"

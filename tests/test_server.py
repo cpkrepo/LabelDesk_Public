@@ -386,7 +386,8 @@ class WindowsOlderVersion(WindowsInstallUpdate):
                 mock.patch.object(app, "DATA", d), mock.patch.object(app, "download", self.fake_downloads(msi, sha)), \
                 mock.patch.object(app.subprocess, "Popen"), mock.patch.object(app.threading, "Timer"):
             app.install_windows_version("9.9.9")
-            script = open(os.path.join(d, "update", "install-update.ps1"), encoding="utf-8").read()
+            with open(os.path.join(d, "update", "install-update.ps1"), encoding="utf-8") as f:
+                script = f.read()
         self.assertLess(script.index("'/x'"), script.index("'/i'"))           # uninstall, then install the older one
         self.assertIn("RelatedProducts('{6B9C2E31-4A57-4D3F-9E1B-2F7C5A0D8E41}')", script)
 
