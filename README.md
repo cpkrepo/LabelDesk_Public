@@ -39,11 +39,16 @@ prints through DYMO's driver). Pick your computer:
 ### macOS (14 Sonoma or newer)
 1. Install **[DYMO Connect for Mac](https://www.dymo.com/support?cfid=online-support-sw-downloads)** (it installs the
    driver for the 550 Turbo and 5XL). You don't need to add the printers in it.
-2. Open **Terminal** and paste:
+2. Download **`LabelDesk-<version>.pkg`** from the **[latest release](https://github.com/cpkrepo/LabelDesk_Public/releases/latest)**
+   and open it — the first time **right-click → Open** (it isn't signed by Apple; or System Settings → Privacy &
+   Security → Open Anyway). It installs LabelDesk for you and finds the printers by itself. If it asks for Apple's
+   developer tools, click Install in that window and open the package again when it's done.
+
+   Or, in **Terminal**:
    ```bash
    xcode-select --install 2>/dev/null; git clone https://github.com/cpkrepo/LabelDesk_Public.git ~/LabelDesk_Public && cd ~/LabelDesk_Public && tools/install-all.sh
    ```
-   The first command installs Apple's developer tools (git + Python) if they're missing — click **Install** in the
+   (the Terminal way, step by step:) the first command installs Apple's developer tools (git + Python) if they're missing — click **Install** in the
    window that pops up, then paste the line again. `install-all.sh` finds both printers on the network (or asks for
    their IP addresses), asks for your Mac password once to add them, installs the app and runs a health check.
 3. Open **LabelDesk** from Launchpad or Spotlight. It starts by itself when you log in.

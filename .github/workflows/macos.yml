@@ -6,10 +6,11 @@ name: macOS
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch: {}
 permissions:
-  contents: read
+  contents: write                # the release job attaches LabelDesk-<v>.pkg; the test jobs only read
 jobs:
   mac:
     runs-on: macos-latest
@@ -73,3 +74,42 @@ jobs:
         with:
           name: printed-labels
           path: /tmp/ld-*/*.pbm
+
+  # The Mac installer package (unsigned): built and installed on a clean Mac like a coworker would — LabelDesk must end up
+  # cloned in ~/LabelDesk_Public and running. On a version tag it's attached to that release.
+  pkg:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    env:
+      DYMO_PKG_URL: https://download.dymo.com/dymo/Software/Mac/DCDMac1.4.3.103.pkg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/dymo.pkg
+          key: ${{ env.DYMO_PKG_URL }}
+      - name: DYMO Connect for Mac (as on a shop Mac)
+        run: |
+          [ -s ~/dymo.pkg ] || curl -fsSL -o ~/dymo.pkg "$DYMO_PKG_URL"
+          sudo installer -pkg ~/dymo.pkg -target / || true
+      - name: Build LabelDesk.pkg
+        run: |
+          branch=${GITHUB_HEAD_REF:-main}
+          LABELDESK_REPO_URL="https://github.com/${GITHUB_REPOSITORY}.git" tools/mac/build-pkg.sh --branch "$branch"
+      - name: Install it like a coworker would, check LabelDesk runs from ~/LabelDesk_Public
+        run: |
+          echo "console user: $(stat -f%Su /dev/console)"
+          sudo installer -pkg dist/LabelDesk-*.pkg -target / || { cat /tmp/labeldesk-install.log; exit 1; }
+          cat /tmp/labeldesk-install.log
+          test -d ~/LabelDesk_Public/.git && test -f ~/Library/LaunchAgents/com.labeldesk.app.plist && test -d ~/Applications/LabelDesk.app
+          curl -sf http://127.0.0.1:8792/api/config | /usr/bin/python3 -c 'import json,sys; c=json.load(sys.stdin); print("LabelDesk", c["version"], "on", c["platform"]); assert c["platform"] == "mac"'
+      - name: Attach to the release (version tags)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=$(tr -d '[:space:]' < VERSION)
+          for i in 1 2 3 4 5 6; do gh release view "v$v" >/dev/null 2>&1 && break; sleep 20; done   # the Windows job creates it
+          gh release view "v$v" >/dev/null 2>&1 || gh release create "v$v" --verify-tag --title "LabelDesk $v" --notes "LabelDesk $v"
+          gh release upload "v$v" "dist/LabelDesk-$v.pkg" "dist/LabelDesk-$v.pkg.sha256" --clobber
+

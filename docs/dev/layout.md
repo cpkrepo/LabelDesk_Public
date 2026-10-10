@@ -33,6 +33,8 @@ web/                 index.html · app.js (canvas rendering at 300 dpi, Code 128
                      detect.js (finds the label on a carrier page + which way is up) · template.js (.dymo import +
                      render, incl. embedded pictures) · style.css. Shop logo: per PC in the config folder
                      (GET/POST /api/logo, /api/logo/clear), migrated once from an old web/tag-logo.png
+tools/mac/build-pkg.sh    unsigned payload-free .pkg (pkgbuild, on a Mac): postinstall = clone for the console user + install-app;
+                          CI builds + installs it on every PR, attaches it to every release (macos.yml job pkg)
 tools/mac/                macOS: install-all · add-printers (DYMO Connect for Mac's PPDs) · install-app (LaunchAgent +
                           ~/Applications/LabelDesk.app) · doctor — tools/install-all|add-printers|install-app|doctor.sh exec these on Darwin
 tools/install-driver.sh   builds + installs DYMO's official 550-series CUPS driver, + SELinux module
