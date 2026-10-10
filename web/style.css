@@ -24,6 +24,8 @@ nav button.on { background: var(--bg); color: var(--ink); font-weight: 600; }
 .printers span.ok.low::before { color: #d08700; }
 .sheet-map { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; margin-bottom: 10px; }
 .sheet-map select { width: 100%; } .tablewrap { overflow-x: auto; max-height: 260px; } #sheet-preview td, #sheet-preview th { white-space: nowrap; }
+#scan-out { border: 1px solid var(--line, #ccc); border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; }
+#scan-out table { width: 100%; } .picked { color: var(--ok); font-weight: 600; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 10px; }
 .chip { border: 1px solid var(--line, #ccc); background: none; border-radius: 999px; padding: 2px 10px; font: inherit; font-size: 13px; cursor: pointer; }
 label.bin { max-width: 11em; }

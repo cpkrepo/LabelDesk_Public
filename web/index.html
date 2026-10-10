@@ -40,6 +40,7 @@
           <label>Serial # <small>(optional — scan it)</small><input name="serial" autocomplete="off" spellcheck="false"></label>
           <label class="bin">Shelf / bin <small>(optional)</small><input name="bin" autocomplete="off"></label>
         </div>
+        <div id="dev-info" class="cwinfo" hidden></div>
         <label>Accessories <small>(optional — each gets its own tag with the same ticket #)</small>
           <input name="accessories" autocomplete="off" placeholder="e.g. Charger, Dock"></label>
         <div class="chips" id="acc-chips">
@@ -250,6 +251,10 @@
   <!-- ================= history ================= -->
   <section id="tab-history" class="tab" hidden>
     <div class="card">
+      <h2>Scan a tag</h2>
+      <div class="row"><label>Ticket # <small>(scan the tag's barcode)</small><input id="scan" inputmode="numeric" autocomplete="off"
+        placeholder="Scan or type, then Enter"></label></div>
+      <div id="scan-out" hidden></div>
       <h2>Printed <small id="hist-count"></small></h2>
       <div class="row hist-tools">
         <input id="hist-filter" type="search" placeholder="Search everything printed: customer, ticket, serial, tracking #…">

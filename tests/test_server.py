@@ -164,6 +164,21 @@ class ConnectWise(unittest.TestCase):
     def save(self, **kw):
         return self.call("cw/settings", {"company": "shop", "public": "pub", "private": "priv", "client_id": "client", **kw})
 
+    def test_serial_lookup_finds_the_device_in_connectwise_and_never_without_keys(self):
+        with mock.patch.object(connectwise, "_get", side_effect=AssertionError("network!")) as net:
+            d = self.call("device?serial=PF2ABC")[1]
+        self.assertEqual(d["cw"], [])
+        net.assert_not_called()                                       # ConnectWise off: local history only
+        self.save()
+        d = self.call("device?serial=pf2abc")[1]
+        self.assertEqual([(c["company"], c["name"], c["model"]) for c in d["cw"]], [("Acme Dental Group", "ACME-LT-07", "ThinkPad T14")])
+        self.assertEqual(connectwise.device(app.cw_creds(), 'x" or 1=1'), [])          # odd characters: not even asked
+
+    def test_scan_shows_the_connectwise_ticket(self):
+        self.save()
+        t = self.call("ticket/75013")[1]
+        self.assertEqual((t["cw"]["status"], t["cw"]["summary"]), ("In Progress", "Laptop won't boot"))
+
     def test_not_configured_says_so(self):
         self.assertFalse(self.call("cw/status")[1]["configured"])
         code, r = self.call("cw/ticket/75013")
@@ -554,3 +569,37 @@ class AutoResume(unittest.TestCase):
 
     def test_leaves_working_queues_alone(self):
         self.assertEqual(self.run_heal("idle", True, True)[0], [])
+
+
+class BeenHereAndPickup(ServerBase):
+    """Been here before? (earlier tags with a serial) and Scan a tag → picked up (this PC's record only)."""
+    def setUp(self):
+        super().setUp()
+        c = app.db()
+        with c:
+            c.execute("DELETE FROM printed")
+            for f in ({"customer": "Acme", "ticket": "75013", "serial": "PF3XK2LQ", "part": "1 of 2"},
+                      {"customer": "Acme", "ticket": "75013", "item": "Charger", "part": "2 of 2"},
+                      {"customer": "Other", "ticket": "750130", "serial": "XPF3XK2LQ"},
+                      {"customer": "Acme", "ticket": "70001", "serial": "pf3xk2lq"}):
+                c.execute("INSERT INTO printed(kind, at, copies, fields, state) VALUES('tag', '2026-10-01T09:00:00', 1, ?, 'done')", (json.dumps(f),))
+        c.close()
+
+    def tearDown(self):
+        c = app.db()
+        with c:
+            c.execute("DELETE FROM printed")
+        c.close()
+
+    def test_been_here_before_matches_the_whole_serial_any_case(self):
+        d = self.call("device?serial=PF3XK2LQ")[1]
+        self.assertEqual(sorted(b["ticket"] for b in d["before"]), ["70001", "75013"])   # not XPF3XK2LQ
+
+    def test_scan_lists_the_tickets_tags_and_marks_picked_up(self):
+        t = self.call("ticket/75013")[1]
+        self.assertEqual(len(t["tags"]), 2)                                              # device + charger, not #750130
+        self.assertIsNone(t["collected"])
+        t = self.call("ticket/75013/collected", {"collected": True})[1]
+        self.assertTrue(t["collected"])
+        self.assertEqual(len([h for h in self.call("history")[1]["items"] if h.get("collected")]), 2)
+        self.assertIsNone(self.call("ticket/75013/collected", {"collected": False})[1]["collected"])

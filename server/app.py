@@ -145,7 +145,8 @@ def queue_for(kind):
 
 # ------------------------------------------------------------------ history (SQLite)
 LOCK = threading.Lock()
-COLUMNS = {"state": "TEXT", "message": "TEXT", "image": "TEXT", "tracking": "TEXT"}
+COLUMNS = {"state": "TEXT", "message": "TEXT", "image": "TEXT", "tracking": "TEXT",
+           "collected": "TEXT"}                                     # 0.10: picked up (History → Scan a tag), this PC only
 
 
 _schema_ok = []
@@ -175,7 +176,7 @@ def row(hid):
     return dict(r) if r else None
 
 
-def history(limit=80, q="", kind="", since="", until="", before=0):
+def history(limit=80, q="", kind="", since="", until="", before=0, ticket="", serial=""):
     """Printed labels, newest first, searched over EVERYTHING ever printed on this PC: q matches any field (customer,
     company, ticket, serial, bin, free text…) or the tracking number; kind tag/ship; since/until YYYY-MM-DD (inclusive);
     before = an id, for "Show more"."""
@@ -187,6 +188,10 @@ def history(limit=80, q="", kind="", since="", until="", before=0):
         args += [esc_like(json.dumps(q.strip())[1:-1]), esc_like(q.strip())]
     if kind in ("tag", "ship"):
         where.append("kind = ?"); args.append(kind)
+    for key, val in (("ticket", ticket), ("serial", serial)):          # exact field (as json.dumps wrote it)
+        if val.strip():
+            where.append("fields LIKE ? ESCAPE '\\'")
+            args.append("%" + json.dumps({key: val.strip()})[1:-1].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%")
     if since:
         where.append("at >= ?"); args.append(since)
     if until:
@@ -218,6 +223,45 @@ def history_csv(**filters):
                     f.get("serial", ""), f.get("bin", ""), (f.get("free") or "").replace("\n", " / "), r.get("tracking") or "",
                     r["copies"], {"done": "yes", "failed": "no"}.get(r.get("state"), r.get("state") or "")])
     return "\ufeff" + out.getvalue()                                  # BOM: Excel reads it as UTF-8
+
+
+def device_info(serial):
+    """Been here before? This PC's earlier tags with this serial (+ ConnectWise configurations with it when it's on)."""
+    seen = [r for r in history(limit=20, serial=serial) if r["kind"] == "tag" and (r["fields"].get("serial") or "").lower() == serial.strip().lower()]
+    out = {"serial": serial.strip(), "before": [{"at": r["at"], "ticket": r["fields"].get("ticket", ""), "customer": r["fields"].get("customer", ""),
+                                                 "collected": r.get("collected")} for r in seen], "cw": []}
+    st = cw_status()
+    if st["on"]:
+        try:
+            out["cw"] = connectwise.device(cw_creds(), serial)
+        except (connectwise.CWError, LookupError, OSError) as e:
+            out["cwError"] = str(e)
+    return out
+
+
+def ticket_info(number):
+    """Scan a tag (History): everything printed for this ticket here, picked up or not, + the ConnectWise ticket."""
+    n = str(number).strip().lstrip("#")
+    rows = [r for r in history(limit=200, ticket=n) if r["fields"].get("ticket") == n]
+    out = {"ticket": n, "tags": rows, "collected": next((r["collected"] for r in rows if r.get("collected")), None), "cw": None}
+    if cw_status()["on"]:
+        try:
+            out["cw"] = connectwise.ticket(cw_creds(), n)
+        except LookupError:
+            out["cw"] = None
+        except (connectwise.CWError, OSError) as e:
+            out["cwError"] = str(e)
+    return out
+
+
+def set_collected(number, collected):
+    n = str(number).strip().lstrip("#")
+    c = db()
+    with c:
+        c.execute("UPDATE printed SET collected = ? WHERE kind = 'tag' AND fields LIKE ? ESCAPE '\\'",
+                  (datetime.now().isoformat(timespec="seconds") if collected else None,
+                   "%" + json.dumps({"ticket": n})[1:-1].replace("%", "\\%").replace("_", "\\_") + "%"))
+    c.close()
 
 
 def customers(limit=400):
@@ -1103,6 +1147,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(body)
                 return
+            if path == "/api/device":                        # ?serial= — been here before?
+                return self.send_json(device_info((q.get("serial") or [""])[0]))
+            if m := re.fullmatch(r"/api/ticket/(\d{1,10})", path):  # History → Scan a tag
+                return self.send_json(ticket_info(m.group(1)))
             if path == "/api/history":
                 f = {k: (q.get(k) or [""])[0] for k in ("q", "kind", "since", "until")}
                 items = history(limit=min(500, int((q.get("limit") or ["60"])[0])), before=int((q.get("before") or ["0"])[0]), **f)
@@ -1212,6 +1260,9 @@ class Handler(BaseHTTPRequestHandler):
                 _cw_check.clear()
                 keys.clear()
                 return self.send_json(cw_status())
+            if m := re.fullmatch(r"/api/ticket/(\d{1,10})/collected", path):   # {collected: bool} — this PC's record only
+                set_collected(m.group(1), bool(b.get("collected", True)))
+                return self.send_json(ticket_info(m.group(1)))
             if path == "/api/sheet":                         # Batch → Open spreadsheet: {name, data: base64} → columns + rows
                 return self.send_json(sheet.read(str(b.get("name") or ""), base64.b64decode(b.get("data") or "", validate=True)))
             if path == "/api/settings/auto-ship":            # Settings → Shipping labels print by themselves: {on}

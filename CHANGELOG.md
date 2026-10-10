@@ -7,6 +7,10 @@ installer attached) and any of them can be brought back with `tools/rollback.sh 
 the owner's `tools/update.sh` turns that heading into the version number when it publishes.
 
 ## Unreleased
+- **Been here before?** A serial typed or scanned at intake shows this PC's earlier tickets for that device (and
+  whether it was picked up); with ConnectWise on, its configuration too — the company fills in by itself.
+- **Scan a tag** (History): scan a tag's ticket barcode to see every tag printed for it (device, accessories, serial,
+  bin), the ConnectWise ticket status, and **Mark picked up** (kept on this PC; ConnectWise is never changed).
 - **Batch from a spreadsheet:** Batch → Open spreadsheet… takes an Excel .xlsx or CSV (any export), guesses which column
   is the ticket #, company, customer, date, serial, bin and accessories (change any), previews it and prints a tag set
   per row — stopping at the first problem so nothing is skipped silently.

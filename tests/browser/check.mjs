@@ -96,6 +96,18 @@ check(sheetState?.shown && sheetState.rows === 3 && /Print 6 tags \(3 devices\)/
       "an Excel sheet opens in Batch with its columns mapped", `${sheetState?.button} · ${sheetState?.map}`);
 check(/75013.*Acme Dental Group.*Jane Smith.*10\/09\/2026.*PF3XK2LQ.*B3.*Charger, Bag/.test(sheetState?.first || ""),
       "the first row is read right (date, serial, accessories)", (sheetState?.first || "").slice(0, 90));
+// 6. intake: a scanned serial says whether LabelDesk has seen it; History → Scan a tag shows the ticket
+const intake = await run(`(async () => { document.getElementById("sheet-close")?.click();
+  const s = document.querySelector("#tag-form [name=serial]"); s.value = "PF3XK2LQ";
+  s.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); await new Promise(r => setTimeout(r, 800));
+  const moved = document.activeElement?.name;
+  const info = document.getElementById("dev-info").textContent;
+  document.querySelector('nav [data-tab="history"]')?.click(); await new Promise(r => setTimeout(r, 300));
+  const scan = document.getElementById("scan"); scan.value = "75013";
+  scan.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); await new Promise(r => setTimeout(r, 800));
+  return { moved, info, scan: document.getElementById("scan-out").textContent }; })()`).catch(e => ({ err: e.message }));
+check(intake.moved === "bin" && /First time/.test(intake.info || ""), "a scanned serial moves on (no print) and is looked up", JSON.stringify(intake).slice(0, 120));
+check(/Ticket #75013/.test(intake.scan || ""), "History → Scan a tag shows the ticket", (intake.scan || "").slice(0, 80));
 check(!problems.length, "no errors on the page", problems.join(" | ").slice(0, 300));
 
 ws.close();

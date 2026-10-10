@@ -861,7 +861,7 @@ function renderHistory() {
     <td>${h.kind === "tag" ? (h.fields.free != null ? `<i>Blank tag</i> · ${esc(h.fields.free.replace(/\n/g, " / "))}`
         : `<b>${esc(h.fields.customer)}</b> · ${esc(usDate(h.fields.received))} · #${esc(h.fields.ticket)}`)
         : `${h.image ? `<img class="thumb" src="api/history/${h.id}/image" alt="" loading="lazy">` : ""}${h.tracking ? `<b>${esc(h.tracking)}</b> ` : ""}<span class="hint">${esc(h.fields.note || "")}</span>`}</td>
-    <td>${h.copies}</td><td>${state(h)}</td><td><button class="ghost" data-id="${h.id}">Reprint</button></td></tr>`).join("")
+    <td>${h.copies}</td><td>${state(h)}${h.collected ? ` <span class="picked" title="${esc(h.collected.replace("T", " "))}">· picked up</span>` : ""}</td><td><button class="ghost" data-id="${h.id}">Reprint</button></td></tr>`).join("")
     || `<tr><td colspan="6" class="hint">Nothing printed yet.</td></tr>`;
   $$("#history button[data-id]").forEach(b => b.onclick = async () => {
     const h = HIST.find(x => x.id == b.dataset.id);
@@ -884,7 +884,7 @@ function renderHistory() {
 function showTab(t) {
   $$("nav button").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
   $$(".tab").forEach(s => s.hidden = s.id !== "tab-" + t);
-  if (t === "history") loadHistory();
+  if (t === "history") { loadHistory(); setTimeout(() => $("#scan").focus(), 0); }
   if (t === "tag") form.ticket.focus();
   if (t === "settings") loadCW();
   if (t === "ship") drop.focus();
@@ -1116,3 +1116,50 @@ $("#sheet-print").onclick = async () => {
   }
   st.textContent = ""; loadCustomers(); jobbar(`✓ Printed tags for all ${rows.length} devices`, "ok");
 };
+
+// ---- been here before? (O): a serial that's typed or scanned → this PC's earlier tags with it + ConnectWise's device
+let devSeq = 0;
+async function deviceLookup() {
+  const serial = form.serial.value.trim(), el = $("#dev-info"), seq = ++devSeq;
+  if (serial.length < 4) { el.hidden = true; return; }
+  let d;
+  try { d = await api("device?serial=" + encodeURIComponent(serial)); } catch { return; }
+  if (seq !== devSeq) return;
+  const parts = [];
+  if (d.before.length) parts.push("<b>Been here before:</b> " + d.before.slice(0, 3).map(b =>
+    `#${esc(b.ticket)} · ${esc(b.customer)} · ${esc(usDate(b.at.slice(0, 10)))}${b.collected ? " (picked up)" : " <b>(not picked up)</b>"}`).join("; "));
+  for (const c of d.cw.slice(0, 2)) parts.push(`ConnectWise: <b>${esc(c.company)}</b> · ${esc([c.name, c.manufacturer, c.model].filter(Boolean).join(" · "))}`);
+  if (d.cw.length === 1 && !form.customer.value.trim()) { form.customer.value = d.cw[0].company; drawTagPreview(); }
+  el.innerHTML = parts.join("<br>") || "First time LabelDesk sees this serial.";
+  el.className = "cwinfo" + (d.before.length || d.cw.length ? " ok" : "");
+  el.hidden = false;
+}
+form.serial.addEventListener("change", deviceLookup);
+form.serial.addEventListener("keydown", e => { if (e.key === "Enter") deviceLookup(); });
+
+// ---- History → Scan a tag (P): the scanner types the ticket # + Enter → its tags, ConnectWise status, picked up?
+async function showTicket(n) {
+  const out = $("#scan-out");
+  let t;
+  try { t = await api("ticket/" + encodeURIComponent(n)); } catch (err) { out.hidden = false; out.textContent = err.message; return; }
+  const parts = t.tags.map(h => h.fields.item ? `${esc(h.fields.item)} (${esc(h.fields.part || "")})` : `Device${h.fields.part ? ` (${esc(h.fields.part)})` : ""}`);
+  out.innerHTML = `<h3>Ticket #${esc(t.ticket)}${t.tags[0] ? ` · ${esc(t.tags[0].fields.customer)}` : ""}</h3>` +
+    (t.cw ? `<p class="hint">ConnectWise: ${esc(t.cw.summary)} · <b>${esc(t.cw.status)}</b>${t.cw.contact ? " · " + esc(t.cw.contact) : ""}</p>` : "") +
+    (t.tags.length ? `<table><tr><th>Tag</th><th>Serial #</th><th>Bin</th><th>Printed</th></tr>${t.tags.map((h, i) =>
+      `<tr><td>${parts[i]}</td><td>${esc(h.fields.serial || "")}</td><td>${esc(h.fields.bin || "")}</td><td>${esc(h.at.replace("T", " ").slice(0, 16))}</td></tr>`).join("")}</table>`
+      : `<p class="hint">No tags printed for this ticket on this PC.</p>`) +
+    (t.tags.length ? `<div class="row actions">${t.collected
+      ? `<span class="picked">✓ Picked up ${esc(t.collected.replace("T", " ").slice(0, 16))}</span> <button class="ghost" type="button" id="scan-undo">Undo</button>`
+      : `<button class="primary" type="button" id="scan-pick">Mark picked up</button>`}</div>` : "");
+  out.hidden = false;
+  const mark = async v => { await api(`ticket/${encodeURIComponent(t.ticket)}/collected`, { collected: v }); showTicket(t.ticket); loadHistory(); };
+  if ($("#scan-pick")) $("#scan-pick").onclick = () => mark(true);
+  if ($("#scan-undo")) $("#scan-undo").onclick = () => mark(false);
+}
+$("#scan").addEventListener("keydown", e => {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  const n = $("#scan").value.trim().replace(/^#/, "");
+  if (/^\d{1,10}$/.test(n)) showTicket(n);
+  $("#scan").select();
+});
