@@ -116,7 +116,7 @@ export function drawTag(canvas, f, flip = false, offsetMm = tagOffset(), tpl = a
   const w = right - left;
   ctx.fillStyle = "#000"; ctx.textBaseline = "alphabetic";
   const bar = f.barcode && f.ticket;
-  // the person's name goes after the company ("Destify - Chris Killion"); a home customer is the company already
+  // the person's name goes after the company ("Acme Dental Group - Jane Smith"); a home customer is the company already
   const company = f.customer || "Customer", person = f.contact || "";
   const name = person && !company.toLowerCase().includes(person.toLowerCase()) ? `${company} - ${person}` : company;
   // a long name: one line down to 56 px, else two lines (split after the company, or at the space nearest the middle)
