@@ -873,7 +873,11 @@ function showNetwork(n) {
     const btn = o ? ` <button class="linkish" data-use="${o.kind}" data-ip="${esc(f.ip)}">Use for ${what}</button>` : "";
     return `<li class="${o ? "" : "ok"}">${esc(MODEL[f.model] || f.model)} · ${esc(f.ip)} <span class="hint">${esc(f.name)}${o ? "" : " — in use"}</span>${btn}</li>`;
   });
-  $("#net-printers").innerHTML = rows.join("") || `<li>${n.scanning ? "Looking…" : n.auto ? "No DYMO printers announced themselves on this network (they may still print — see the bar at the top)." : "Looking for printers is off (config.json auto_printers)."}</li>`;
+  const blocked = n.error ? (CFG.platform === "mac"
+      ? "macOS doesn't let LabelDesk look for printers on the network by itself yet (Local Network privacy). Printing works; set printers up with tools/add-printers.sh."
+      : `Looking for printers didn't work (${n.error}). Printing works; set printers up as before.`) : "";
+  $("#net-printers").innerHTML = rows.join("") || `<li>${n.scanning ? "Looking…" : !n.auto ? "Looking for printers is off (config.json auto_printers)."
+    : blocked || "No DYMO printers announced themselves on this network (they may still print — see the bar at the top)."}</li>`;
   $$("[data-use]").forEach(b => b.onclick = async () => {
     try { await api("printers/use", { kind: b.dataset.use, ip: b.dataset.ip }); } catch (err) { toast(err.message, true); }
     loadPrinters();

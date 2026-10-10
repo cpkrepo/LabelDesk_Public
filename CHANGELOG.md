@@ -7,8 +7,9 @@ installer attached) and any of them can be brought back with `tools/rollback.sh 
 the owner's `tools/update.sh` turns that heading into the version number when it publishes.
 
 ## Unreleased
-- **Printers set themselves up.** When LabelDesk starts and every few minutes it looks for the DYMO printers on the
-  network: a printer it finds for the first time is set up, and a printer that got a new address is followed — no more
+- **Printers set themselves up** (Fedora; on the Mac, macOS doesn't allow it from the background yet, and on Windows it's
+  untested — Settings says when it can't look). When LabelDesk starts and every few minutes it looks for the DYMO
+  printers on the network: a printer it finds for the first time is set up, and a printer that got a new address is followed — no more
   `add-printers.sh` after a router restart. Other DYMO printers it finds are listed in Settings → Printers on the network
   with a "Use for…" button (Windows: always a button, it needs an admin prompt).
 - **LabelDesk knows which roll is loaded** (550 Turbo and 5XL read the roll's chip): tags switch to 30252 or 30321 by

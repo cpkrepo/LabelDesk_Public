@@ -63,7 +63,10 @@
 
 ## Roadmap (2026-10-10 review: as good as DYMO Connect, then better) — pick one, ship it, tick it
 **1** and **2** built in 0.9.0 (CI + fakes on Fedora and macOS); still to check against the shop's REAL printers.
-- [~] 1. **Printers found automatically** (0.9.0; real printers: do they announce _pdl-datastream on Bonjour?) at startup + every few minutes (Bonjour): a printer's new IP → its queue is
+- [~] 1. **Printers found automatically** (0.9.0: works on Fedora. **macOS: blocked** — Local Network privacy gives a
+      LaunchAgent "No route to host" for multicast (CI 2026-10-10); options: browse via CUPS (`lpinfo --include-schemes dnssd`,
+      cupsd is exempt; queues by dnssd URI) or run as an app bundle granted Local Network. **Windows: untested** (VM has no
+      multicast; firewall may drop replies) — maybe Windows' DnsServiceBrowse API. Real printers: do they announce _pdl-datastream?) at startup + every few minutes (Bonjour): a printer's new IP → its queue is
       re-pointed silently; a missing 550 Turbo / 5XL queue → added (Fedora/Mac; Windows: one **Add** button, needs admin);
       an extra/unknown DYMO → a banner asks, never added silently.
 - [~] 2. **Loaded roll from the printer** (0.9.0; real printers: `tools/dymo-status.py <ip>` — SKU text + count as documented?) (550 series NFC, status bytes 11–22 SKU, 27–28 labels left; ESC U = size in mm):

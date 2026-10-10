@@ -26,6 +26,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://127.0.0.1:8792")
     ap.add_argument("--wait", type=int, default=60)
+    ap.add_argument("--queues-by-hand", action="store_true",
+                    help="the queues were added with tools/add-printers.sh (macOS: Local Network privacy blocks the scan)")
     a = ap.parse_args()
     deadline, p = time.time() + a.wait, {}
     while time.time() < deadline:
@@ -37,7 +39,7 @@ def main():
             call(a.url, "printers/scan", {})                       # nudge: scan now instead of waiting 5 minutes
         time.sleep(2)
     events = [e["text"] for e in call(a.url, "printers/events?after=0")["events"]]
-    print("found:", [(f["model"], f["ip"]) for f in p.get("network", {}).get("found", [])])
+    print("found:", [(f["model"], f["ip"]) for f in p.get("network", {}).get("found", [])], "· scan error:", p.get("network", {}).get("error"))
     print("events:", *events, sep="\n  ")
     problems = []
     for kind, stock in (("tag", "30252"), ("ship", "1744907")):
@@ -47,7 +49,7 @@ def main():
             problems.append(f"{kind} queue not working: {p.get(kind, {}).get('status')}")
         if r.get("stock") != stock or not r.get("remaining"):
             problems.append(f"{kind}: expected roll {stock} with a count, got {r}")
-    if sum("set it up" in e for e in events) != 2:
+    if not a.queues_by_hand and sum("set it up" in e for e in events) != 2:
         problems.append("expected two 'set it up' events")
     for x in problems:
         print("✗", x)

@@ -42,8 +42,13 @@ jobs:
           nohup /usr/bin/python3 tests/fake_labelwriter.py /tmp/ld-ship --bind 127.0.0.2 --mdns "DYMO LabelWriter 5XL" --roll 1744907 --left 212 > /tmp/fake-ship.log 2>&1 &
           sleep 1
           tools/install-app.sh
-      - name: Printers set themselves up (queues added by LabelDesk, rolls read)
-        run: /usr/bin/python3 tests/auto_check.py --wait 90
+      # macOS Local Network privacy stops a LaunchAgent's Bonjour scan ("No route to host", seen here 2026-10-10), so on
+      # the Mac the queues come from tools/add-printers.sh as before; LabelDesk must say why and still read the rolls
+      - name: Queues by hand (Mac), rolls read by LabelDesk
+        run: |
+          tools/add-printers.sh 127.0.0.1 127.0.0.2
+          /usr/bin/python3 tests/auto_check.py --wait 90 --queues-by-hand
+          curl -s http://127.0.0.1:8792/api/printers | /usr/bin/python3 -c "import json,sys; e=json.load(sys.stdin)['network']['error']; print('scan error shown:', e); assert e"
       - name: Print through the Mac driver on the queues LabelDesk added
         run: |
           lpstat -v
