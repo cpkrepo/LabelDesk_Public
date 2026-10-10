@@ -1,19 +1,20 @@
 // LabelDesk front end: draws labels at 300 dpi on a canvas (the preview IS the print), prints via the local server.
 import { detectLabel } from "./detect.js";
+import { draw as drawCode } from "./barcodes.js";
 import { parseDymo, drawTemplate, loadTemplates, saveTemplates, activeTemplate, activeTemplateId, setActiveTemplate, templateImagesReady } from "./template.js";
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const DPI = 300;
 let CFG = null;
 
-async function api(path, body) {
+export async function api(path, body) {
   const r = await fetch("/api/" + path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw Object.assign(new Error(d.error || r.statusText), { status: r.status, data: d });
   return d;
 }
 let toastT;
-function toast(msg, bad = false) {
+export function toast(msg, bad = false) {
   const t = $("#toast"); t.textContent = msg; t.className = bad ? "bad" : ""; t.hidden = false;
   clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, bad ? 7000 : 3000);
 }
@@ -23,30 +24,12 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "
 // CUPS places a 300 ppi image 1:1 there. A full-label image is bigger than that area and CUPS tiles it over 4 pages.
 const area = L => [Math.floor((L.safe_in[2] - L.safe_in[0]) * DPI) - 1, Math.floor((L.safe_in[3] - L.safe_in[1]) * DPI) - 1];
 
-// ------------------------------------------------------------------ Code 128 (set B) — ticket numbers, any printable ASCII
-export const C128 = ["212222","222122","222221","121223","121322","131222","122213","122312","132212","221213","221312","231212",
-  "112232","122132","122231","113222","123122","123221","223211","221132","221231","213212","223112","312131","311222","321122",
-  "321221","312212","322112","322211","212123","212321","232121","111323","131123","131321","112313","132113","132311","211313",
-  "231113","231311","112133","112331","132131","113123","113321","133121","313121","211331","231131","213113","213311","213131",
-  "311123","311321","331121","312113","312311","332111","314111","221411","431111","111224","111422","121124","121421","141122",
-  "141221","112214","112412","122114","122411","142112","142211","241211","221114","413111","241112","134111","111242","121142",
-  "121241","114212","124112","124211","411212","421112","421211","212141","214121","412121","111143","111341","131141","114113",
-  "114311","411113","411311","113141","114131","311141","411131","211412","211214","211232","2331112"];
-export function code128(text) {
-  const codes = [104];                                        // Start B
-  for (const ch of text) {
-    const c = ch.charCodeAt(0) - 32;
-    if (c < 0 || c > 94) throw new Error("barcode: only plain characters");
-    codes.push(c);
-  }
-  codes.push(codes.reduce((s, c, i) => s + c * (i || 1), 0) % 103, 106);   // checksum, Stop
-  return codes.map(c => C128[c]).join("");                    // module widths: bar, space, bar, …
-}
-function drawBarcode(ctx, text, x, y, w, h) {
-  const widths = code128(text), modules = [...widths].reduce((s, d) => s + +d, 0) + 20;   // + 10-module quiet zones
-  const m = Math.max(1, Math.floor(w / modules));             // whole pixels per module: crisp on a 300 dpi head
-  let cx = x + Math.round((w - m * (modules - 20)) / 2);
-  [...widths].forEach((d, i) => { if (i % 2 === 0) ctx.fillRect(cx, y, m * d, h); cx += m * d; });
+// ------------------------------------------------------------------ barcodes (web/barcodes.js): Code 128, Code 39, UPC-A, EAN-13, QR
+export { C128, code128 } from "./barcodes.js";
+// the tag's ticket barcode: Code 128 (default) or Code 39, Settings → Tag barcode — both read by the shop's 1D scanner
+const tagSymbology = () => (CFG && CFG.tagBarcode) || "code128";
+function drawBarcode(ctx, text, x, y, w, h, symbology = tagSymbology()) {
+  drawCode(ctx, symbology, text, x, y, w, h);
 }
 
 // ------------------------------------------------------------------ text fitting
@@ -57,7 +40,7 @@ function fit(ctx, text, maxW, size, min, weight = "700") {
   }
   return min;
 }
-const usDate = iso => { const [y, m, d] = (iso || "").split("-"); return y ? `${m}/${d}/${y}` : ""; };
+export const usDate = iso => { const [y, m, d] = (iso || "").split("-"); return y ? `${m}/${d}/${y}` : ""; };
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
 // ------------------------------------------------------------------ inventory tag (30252 or 30321), drawn across the label's length
@@ -89,6 +72,24 @@ function tagLogo(height = LOGO_H) {
   return bwLogo = c;
 }
 // offsetMm: the whole design (text, barcode, logo) moves down (+) / up (−) — fixes printers that clip the top line
+// any DYMO label from the designer: the canvas is that label's printable area (CUPS places it 1:1, like the tag);
+// "Landscape" layouts run along the label's length and are turned onto the page the way the tag is
+export function drawLabel(canvas, lab, tpl, f = {}) {
+  const [W, H] = area(lab);
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  const turn = tpl.orientation === "Landscape" && H > W;
+  if (turn) { if (!tpl.flip) { ctx.translate(W, 0); ctx.rotate(Math.PI / 2); } else { ctx.translate(0, H); ctx.rotate(-Math.PI / 2); } }
+  else if (tpl.flip) { ctx.translate(W, H); ctx.rotate(Math.PI); }
+  drawTemplate(ctx, tpl, f, turn ? H : W, turn ? W : H, { drawBarcode, usDate });
+  ctx.restore();
+  return canvas;
+}
+export const designSize = (lab, tpl) => { const [W, H] = area(lab); return tpl.orientation === "Landscape" && H > W ? [H, W] : [W, H]; };
+export const getCfg = () => CFG;
+
 export function drawTag(canvas, f, flip = false, offsetMm = tagOffset(), tpl = activeTemplate()) {
   const [W, H] = area(CFG.labels.tag);                        // printable area as fed: 30321 391 × 960, 30252 298 × 962
   canvas.width = W; canvas.height = H;
@@ -124,10 +125,16 @@ export function drawTag(canvas, f, flip = false, offsetMm = tagOffset(), tpl = a
     nameLines = [name.slice(0, cut), name.slice(cut + 1)];
     nameMax = z(bar ? 52 : 62);
   }
-  const small = !!f.contact || nameLines.length > 1;              // a 4th line: everything a little smaller
+  // intake details on one small line: S/N (scanned) and shelf/bin; an accessory tag says what it is and "2 of 3"
+  const intake = [f.serial ? `S/N ${f.serial}` : "", f.bin ? `Bin ${f.bin}` : ""].filter(Boolean).join("   ");
+  const item = f.item ? `${f.item}${f.part ? ` · ${f.part}` : ""}` : (f.part ? `Device · ${f.part}` : "");
+  const extra = [item && { t: item, size: z(bar ? 50 : 60), min: z(28), weight: "700" },
+                 intake && { t: intake, size: z(bar ? 40 : 48), min: z(24), weight: "400" }].filter(Boolean);
+  const small = !!f.contact || nameLines.length > 1 || extra.length > 0;   // a 4th line: everything a little smaller
   const lines = [
     ...nameLines.map(t => ({ t, size: small ? Math.min(nameMax, z(78)) : nameMax, min: z(30), weight: "700", name: true })),
     ...(f.contact ? [{ t: f.contact, size: z(bar ? 44 : 54), min: z(28), weight: "400" }] : []),
+    ...extra,
     { t: `Received: ${usDate(f.received)}`, size: z(small ? (bar ? 42 : 50) : (bar ? 54 : 62)), min: z(28), weight: "400" },
     { t: `Ticket#: ${f.ticket || ""}`, size: z(small ? (bar ? 56 : 68) : (bar ? 70 : 88)), min: z(32), weight: "700" },
   ];
@@ -232,15 +239,15 @@ function grayOf(canvas) {
 }
 // send one label: resolves when CUPS has it (the bar keeps following it). Double press within 3 s → asks first;
 // a shipping label whose barcode can't be read → "Print anyway" instead of printing a label that won't scan.
-async function printCanvas(kind, canvas, copies, fields, what, { force = false, wait = false } = {}) {
+export async function printCanvas(kind, canvas, copies, fields, what, { force = false, wait = false, stock = null } = {}) {
   if (busy) return false;
   if (copies > 10 && !confirm(`Print ${copies} copies?`)) return false;
   busy = true; $$("button.primary").forEach(b => b.disabled = true);
   const png = canvas.toDataURL("image/png");
-  const again = () => printCanvas(kind, canvas, copies, fields, what, { force: true });
+  const again = () => printCanvas(kind, canvas, copies, fields, what, { force: true, stock });
   try {
     let check;
-    if (kind === "ship" && !CFG.barcodeCheck) {                // no zbar on this PC (Windows): check in the browser
+    if (kind === "ship" && !stock && !CFG.barcodeCheck) {      // no zbar on this PC (Windows): check in the browser
       jobbar("Checking the barcode…", "wait");
       check = await checkBarcode(canvas);
       if (!check.ok && !force) {
@@ -250,7 +257,7 @@ async function printCanvas(kind, canvas, copies, fields, what, { force = false, 
     }
     const gray = CFG.platform === "windows" || CFG.platform === "mac" ? grayOf(canvas) : undefined;
     jobbar(`Sending to the ${PRINTER_NAME[kind]}… — ${what}`, "wait");
-    const r = await api("print", { kind, png, gray, check, copies, fields, force: force || Date.now() < forceUntil });
+    const r = await api("print", { kind, png, gray, check, copies, fields, force: force || Date.now() < forceUntil, ...(stock ? { stock } : {}) });
     const label = r.check?.tracking ? `${what} · ${r.check.carrier} ${r.check.tracking}` : what;
     const done = track(r.id, label, kind, again);
     done.then(ok => { if (ok) checkUpdate(); });                // after every print: is there a newer LabelDesk?
@@ -368,7 +375,10 @@ $("#ver-newest").onclick = () => switchVersion("newest", false);
 // ------------------------------------------------------------------ tag form
 const form = $("#tag-form");
 const tagFields = () => ({ customer: form.customer.value.trim(), received: form.received.value, ticket: form.ticket.value.trim().replace(/^#/, ""),
-                           barcode: form.barcode.checked, contact: form.showContact.checked ? form.contact.value.trim() : "" });
+                           barcode: form.barcode.checked, contact: form.showContact.checked ? form.contact.value.trim() : "",
+                           serial: form.serial.value.trim(), bin: form.bin.value.trim() });
+// accessories typed or picked: "Charger, Dock" → ["Charger", "Dock"] (each gets its own tag: "2 of 3")
+const accessories = () => form.accessories.value.split(/[,;\n]/).map(s => s.trim()).filter(Boolean);
 const flip = () => { try { return JSON.parse(localStorage.getItem("flipTag")) ?? CFG.flipTag; } catch { return CFG.flipTag; } };
 // text position on the tag (mm, + = down), per PC like Rotate 180°; config.json tag_offset_mm is the default
 function tagOffset() {
@@ -385,8 +395,11 @@ $("#offset-down").onclick = () => nudge(0.25);
 $("#offset-up").onclick = () => nudge(-0.25);
 // ---- tag layout: built-in or an imported DYMO Connect template (.dymo), per PC
 const tplPanel = $("#tpl-panel");
+// tag layouts: imported .dymo templates and designer layouts made for a tag roll (30252 / 30321)
+const TAG_STOCK_IDS = ["w79h252", "w102h252", "w79h252.1", "w79h252.2", "w102h252.1"];
+export const isTagLayout = t => !t.stock || TAG_STOCK_IDS.includes(t.stock);
 function showTemplates() {
-  const list = loadTemplates(), id = activeTemplateId();
+  const list = loadTemplates().filter(isTagLayout), id = activeTemplateId();
   $("#tpl-select").innerHTML = `<option value="">Built-in</option>` + list.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
   $("#tpl-select").value = list.some(t => t.id === id) ? id : "";
   $("#tpl-edit").hidden = $("#tpl-delete").hidden = !$("#tpl-select").value;
@@ -457,6 +470,18 @@ $("#free-text").addEventListener("keydown", e => {
 });
 $("#flip").onchange = e => { try { localStorage.setItem("flipTag", e.target.checked); } catch {} drawTagPreview(); };
 form.addEventListener("input", () => drawTagPreview());
+// a device's tags: the device tag ("1 of N" when it has accessories) + one per accessory, same ticket # and barcode.
+// wait = follow every tag until printed (batches: a problem stops at that tag) → true when all went out
+async function printTagSet(f, acc, copies = 1, { wait = false, force = false } = {}) {
+  const n = acc.length + 1;
+  const device = acc.length ? { ...f, part: `1 of ${n}`, accessories: acc } : f;
+  let ok = await printCanvas("tag", await tagCanvas(device), copies, device, tagWhat(device), { wait: wait || acc.length > 0, force });
+  for (let i = 0; ok && i < acc.length; i++) {
+    const a = { ...f, serial: "", item: acc[i], part: `${i + 2} of ${n}` };
+    ok = await printCanvas("tag", await tagCanvas(a), 1, a, `${tagWhat(a)} · ${acc[i]}`, { wait: wait || i < acc.length - 1, force });
+  }
+  return ok;
+}
 const tagWhat = f => f.free != null ? `blank tag “${f.free.split("\n")[0].slice(0, 40)}”` : `${f.customer} · #${f.ticket}`;
 // the print image for a tag (imported templates' pictures have to be decoded before drawing)
 async function tagCanvas(f) {
@@ -469,9 +494,11 @@ form.onsubmit = async e => {
   if (cwPending) { await cwPending; cwPending = null; }
   const f = tagFields();
   if (!f.customer || !f.ticket) return toast("Customer and ticket # are needed", true);
-  if (await printCanvas("tag", await tagCanvas(f), +form.copies.value || 1, f, tagWhat(f))) {
-    try { localStorage.setItem("lastTag", JSON.stringify(f)); } catch {}
-    form.customer.value = form.ticket.value = form.contact.value = ""; cwAuto = { customer: "", contact: "" }; cwInfo(""); cwSeq++;
+  const device = { ...f, ...(accessories().length ? { part: `1 of ${accessories().length + 1}`, accessories: accessories() } : {}) };
+  if (await printTagSet(f, accessories(), +form.copies.value || 1)) {
+    try { localStorage.setItem("lastTag", JSON.stringify(device)); } catch {}
+    form.customer.value = form.ticket.value = form.contact.value = form.serial.value = form.bin.value = form.accessories.value = "";
+    cwAuto = { customer: "", contact: "" }; cwInfo(""); cwSeq++;
     form.copies.value = 1; form.ticket.focus(); drawTagPreview(); loadCustomers();
   }
 };
@@ -550,6 +577,11 @@ $("#tag-label").onchange = async e => {
     CFG = await api("config"); drawTagPreview(); toast(`Tags now print on ${CFG.labels.tag.stock} labels`);
     $("#tag-stock").textContent = `${CFG.tagLabel} · ${CFG.labels.tag.size}`;
   } catch (err) { toast(err.message, true); $("#tag-label").value = CFG.tagLabel; }
+};
+// ---- Settings → Tag barcode: Code 128 or Code 39 (both read by a 1D scanner)
+$("#tag-barcode").onchange = async e => {
+  try { await api("settings/tag-barcode", { symbology: e.target.value }); CFG = await api("config"); drawTagPreview(); toast("Saved"); }
+  catch (err) { toast(err.message, true); $("#tag-barcode").value = CFG.tagBarcode; }
 };
 // ---- Settings → Tag logo (per PC; kept in the config folder, not in the app)
 function showLogoState() {
@@ -779,14 +811,70 @@ $("#ship-print").onclick = async () => {
     $("#ship-clear").click();
 };
 
+// ---- hands-free shipping (Settings, off by default): a label that arrived by itself prints by itself — only when it's
+// certain: the label was found on the page, its carrier tracking barcode reads, and that tracking # never printed here
+let autoShipCancel = null;
+async function autoShip(item) {
+  if (!SHIP.src || SHIP.how === "none" || busy) return;
+  const canvas = drawShip(document.createElement("canvas"));
+  const check = await checkBarcode(canvas);
+  if (!check.ok || !check.tracking) {
+    return jobbar(`Not printed by itself: ${check.ok ? "no carrier tracking # found" : check.message} — check it and press Print`, "wait");
+  }
+  const tracking = check.tracking.replace(/\s/g, "");
+  let before = [];
+  for (const q of new Set([tracking, check.tracking])) {         // stored with or without the spaces FedEx numbers get
+    try { before.push(...(await api("history?kind=ship&limit=5&q=" + encodeURIComponent(q))).items.filter(h => h.state !== "failed")); } catch {}
+  }
+  if (before.length) {
+    return jobbar(`${check.carrier} ${check.tracking} was already printed ${before[0].at.slice(0, 10)} — not printed again by itself`,
+                  "wait", [["Print anyway", () => $("#ship-print").click()], ["Clear", () => { $("#ship-clear").click(); jobbar(""); }]]);
+  }
+  let cancelled = false;
+  autoShipCancel = () => { cancelled = true; jobbar("Cancelled — press Print when you want it", "wait"); };
+  for (let s = 5; s > 0 && !cancelled; s--) {
+    jobbar(`Printing ${check.carrier} ${check.tracking} by itself in ${s} s…`, "wait", [["Cancel", autoShipCancel]]);
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  autoShipCancel = null;
+  if (cancelled) return;
+  const note = `${item.name} — printed by itself (${item.source}), label found, turned ${SHIP.turn}°`;
+  if (await printCanvas("ship", canvas, 1, { note }, `${check.carrier} ${check.tracking}`)) $("#ship-clear").click();
+}
+$("#auto-ship").onchange = async e => {
+  try { await api("settings/auto-ship", { on: e.target.checked }); CFG = await api("config");
+        toast(e.target.checked ? "Shipping labels from Downloads print by themselves" : "Shipping labels wait for you again"); }
+  catch (err) { toast(err.message, true); e.target.checked = !!CFG.autoShip; }
+};
+
 // ------------------------------------------------------------------ history
 let HIST = [];
-async function loadHistory() {
-  HIST = (await api("history")).items; renderHistory();
+// History: searched on the server over everything ever printed on this PC; 60 at a time, "Show more" for older
+const HIST_PAGE = 60;
+function histQuery() {
+  const p = new URLSearchParams();
+  const v = { q: $("#hist-filter").value.trim(), kind: $("#hist-kind").value, since: $("#hist-since").value, until: $("#hist-until").value };
+  for (const [k, x] of Object.entries(v)) if (x) p.set(k, x);
+  return p;
 }
+async function loadHistory(more = false) {
+  const p = histQuery();
+  $("#hist-csv").href = "api/history.csv" + (p.toString() ? "?" + p : "");
+  p.set("limit", HIST_PAGE);
+  if (more && HIST.length) p.set("before", HIST[HIST.length - 1].id);
+  const items = (await api("history?" + p)).items;
+  HIST = more ? HIST.concat(items) : items;
+  $("#hist-more").hidden = items.length < HIST_PAGE;
+  $("#hist-count").textContent = histQuery().toString() ? `${HIST.length}${items.length < HIST_PAGE ? "" : "+"} found` : `newest first`;
+  renderHistory();
+}
+let histTimer;
+const histSearch = () => { clearTimeout(histTimer); histTimer = setTimeout(() => loadHistory(), 250); };
+["#hist-filter"].forEach(s => $(s).oninput = histSearch);
+["#hist-kind", "#hist-since", "#hist-until"].forEach(s => $(s).onchange = () => loadHistory());
+$("#hist-more").onclick = () => loadHistory(true);
 function renderHistory() {
-  const q = $("#hist-filter").value.trim().toLowerCase();
-  const rows = HIST.filter(h => !q || (JSON.stringify(h.fields) + (h.tracking || "")).toLowerCase().includes(q));
+  const rows = HIST;
   const state = h => ({ done: "✓", failed: `<span class="bad" title="${esc(h.message)}">✗ not printed</span>`,
                          sent: "…", sending: "…" }[h.state] ?? "");
   $("#history tbody").innerHTML = rows.map(h => `<tr><td>${esc(h.at.replace("T", " ").slice(0, 16))}</td>
@@ -794,7 +882,7 @@ function renderHistory() {
     <td>${h.kind === "tag" ? (h.fields.free != null ? `<i>Blank tag</i> · ${esc(h.fields.free.replace(/\n/g, " / "))}`
         : `<b>${esc(h.fields.customer)}</b> · ${esc(usDate(h.fields.received))} · #${esc(h.fields.ticket)}`)
         : `${h.image ? `<img class="thumb" src="api/history/${h.id}/image" alt="" loading="lazy">` : ""}${h.tracking ? `<b>${esc(h.tracking)}</b> ` : ""}<span class="hint">${esc(h.fields.note || "")}</span>`}</td>
-    <td>${h.copies}</td><td>${state(h)}</td><td><button class="ghost" data-id="${h.id}">Reprint</button></td></tr>`).join("")
+    <td>${h.copies}</td><td>${state(h)}${h.collected ? ` <span class="picked" title="${esc(h.collected.replace("T", " "))}">· picked up</span>` : ""}</td><td><button class="ghost" data-id="${h.id}">Reprint</button></td></tr>`).join("")
     || `<tr><td colspan="6" class="hint">Nothing printed yet.</td></tr>`;
   $$("#history button[data-id]").forEach(b => b.onclick = async () => {
     const h = HIST.find(x => x.id == b.dataset.id);
@@ -811,13 +899,13 @@ function renderHistory() {
     setTimeout(loadHistory, 1500);
   });
 }
-$("#hist-filter").oninput = renderHistory;
+
 
 // ------------------------------------------------------------------ tabs, printers, keys
 function showTab(t) {
   $$("nav button").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
   $$(".tab").forEach(s => s.hidden = s.id !== "tab-" + t);
-  if (t === "history") loadHistory();
+  if (t === "history") { loadHistory(); setTimeout(() => $("#scan").focus(), 0); }
   if (t === "tag") form.ticket.focus();
   if (t === "settings") loadCW();
   if (t === "ship") drop.focus();
@@ -855,6 +943,7 @@ async function loadPrinters() {
     }
     $("#roll-auto").textContent = tr?.stock ? `The 550 Turbo reports ${tr.name}${tr.remaining != null ? `, ${tr.remaining} left` : ""}: LabelDesk picks this by itself.` : "";
     showNetwork(p.network);
+    showPrinterCards(p);
     const ev = (await api("printers/events?after=" + eventsAfter)).events;
     for (const e of ev) { toast(e.text, e.level === "bad"); eventsAfter = Math.max(eventsAfter, e.id); }
     $$("[data-resume]").forEach(b => b.onclick = async () => {
@@ -863,15 +952,27 @@ async function loadPrinters() {
     });
   } catch { $("#printers").innerHTML = `<span>LabelDesk server not answering</span>`; }
 }
+// Settings → Printers: one card per printer — state, roll, labels left, where it is
+function showPrinterCards(p) {
+  $("#printer-cards").innerHTML = [["tag", "550 Turbo · tags"], ["ship", "5XL · shipping"]].map(([k, n]) => {
+    const x = p[k], r = x.roll;
+    return `<div><b>${n}</b>
+      <span class="${x.ok ? "" : "bad"}">${esc(x.status)}</span><br>
+      ${r ? `Roll: ${esc(r.name || r.sku || "unknown")}${r.remaining != null ? ` · <b style="display:inline">${r.remaining}</b> left` : ""}${r.low ? " · <span class='bad'>low</span>" : ""}<br>`
+          : `<span class="hint">Roll: not reported</span><br>`}
+      <span class="hint">Queue ${esc(x.queue || "—")}</span></div>`;
+  }).join("");
+}
 // Settings → Printers on the network
 const MODEL = { "550T": "LabelWriter 550 Turbo", "550": "LabelWriter 550", "5XL": "LabelWriter 5XL" };
 function showNetwork(n) {
   if (!n) return;
-  const offers = new Map(n.offers.map(o => [o.ip, o]));
+  const offers = new Map(n.offers.map(o => [o.ip || o.uri || o.name, o]));
   const rows = n.found.map(f => {
-    const o = offers.get(f.ip), what = f.model === "5XL" ? "shipping labels" : "tags";
-    const btn = o ? ` <button class="linkish" data-use="${o.kind}" data-ip="${esc(f.ip)}">Use for ${what}</button>` : "";
-    return `<li class="${o ? "" : "ok"}">${esc(MODEL[f.model] || f.model)} · ${esc(f.ip)} <span class="hint">${esc(f.name)}${o ? "" : " — in use"}</span>${btn}</li>`;
+    const o = offers.get(f.ip || f.uri || f.name), what = f.model === "5XL" ? "shipping labels" : "tags";
+    const key = f.ip || f.uri || f.name;
+    const btn = o ? ` <button class="linkish" data-use="${o.kind}" data-key="${esc(key)}">Use for ${what}</button>` : "";
+    return `<li class="${o ? "" : "ok"}">${esc(MODEL[f.model] || f.model)}${f.ip ? " · " + esc(f.ip) : ""} <span class="hint">${esc(f.name)}${o ? "" : " — in use"}</span>${btn}</li>`;
   });
   const blocked = n.error ? (CFG.platform === "mac"
       ? "macOS doesn't let LabelDesk look for printers on the network by itself yet (Local Network privacy). Printing works; set printers up with tools/add-printers.sh."
@@ -879,7 +980,7 @@ function showNetwork(n) {
   $("#net-printers").innerHTML = rows.join("") || `<li>${n.scanning ? "Looking…" : !n.auto ? "Looking for printers is off (config.json auto_printers)."
     : blocked || "No DYMO printers announced themselves on this network (they may still print — see the bar at the top)."}</li>`;
   $$("[data-use]").forEach(b => b.onclick = async () => {
-    try { await api("printers/use", { kind: b.dataset.use, ip: b.dataset.ip }); } catch (err) { toast(err.message, true); }
+    try { await api("printers/use", { kind: b.dataset.use, key: b.dataset.key }); } catch (err) { toast(err.message, true); }
     loadPrinters();
   });
 }
@@ -919,6 +1020,7 @@ async function pollInbox(open = true) {
     showTab("ship");
     if (src) useShipSource(src, item.name); else await loadShip(blob, item.name);
     toast(`New label from ${item.source}: ${item.name}`);
+    if (CFG.autoShip) await autoShip(item);
   };
   if (SHIP.src) jobbar(`New label from ${item.source}: ${item.name}`, "wait", [["Open it", openIt], ["Later", () => jobbar("")]]);
   else openIt();
@@ -943,6 +1045,8 @@ window.addEventListener("focus", rollDate);
   setInterval(rollDate, 60000);
   $("#flip").checked = flip();
   $("#tag-label").value = CFG.tagLabel;
+  $("#tag-barcode").value = CFG.tagBarcode || "code128";
+  $("#auto-ship").checked = !!CFG.autoShip;
   $("#tag-stock").textContent = `${CFG.tagLabel} · ${CFG.labels.tag.size}`;
   try { form.showContact.checked = JSON.parse(localStorage.getItem("showContact")) ?? false; } catch {}
   $("#win-printer").hidden = $("#win-dymo").hidden = CFG.platform !== "windows";
@@ -955,3 +1059,132 @@ window.addEventListener("focus", rollDate);
   setInterval(loadPrinters, 15000);
   await pollInbox(false); setInterval(pollInbox, 2000);          // only labels that arrive from now on
 })();
+
+// ---- intake: a barcode scanner types the serial and presses Enter — move on instead of printing
+form.serial.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); form.bin.focus(); } });
+form.bin.addEventListener("keydown", e => { if (e.key === "Enter" && !form.ticket.value.trim()) { e.preventDefault(); form.ticket.focus(); } });
+$$("#acc-chips .chip").forEach(b => b.onclick = () => {
+  const list = accessories();
+  if (!list.some(x => x.toLowerCase() === b.textContent.toLowerCase())) list.push(b.textContent);
+  form.accessories.value = list.join(", "); drawTagPreview();
+});
+["serial", "bin", "accessories"].forEach(n => form[n].addEventListener("input", () => drawTagPreview()));
+
+// ---- Batch → Open spreadsheet (Excel .xlsx or CSV, read by the server: server/sheet.py) → map columns → one tag set per row
+const SHEET_FIELDS = [["ticket", "Ticket #", /ticket|tkt|job|ref/i], ["customer", "Company", /company|client|business|account|organi[sz]ation|customer$/i],
+  ["contact", "Customer name", /contact|person|owner|customer name|^name$/i], ["received", "Date received", /date|received|in$/i],
+  ["serial", "Serial #", /serial|s\/n|\bsn\b|service tag/i], ["bin", "Shelf / bin", /bin|shelf|location|slot/i],
+  ["accessories", "Accessories", /accessor|items?|included|with/i]];
+let SHEET = null;
+function sheetDate(v) {                                       // 2026-10-09 · 10/09/2026 · 10/9/26 → ISO; else the form's date
+  const s = String(v || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
+  if (m) return `${m[3].length === 2 ? "20" + m[3] : m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+  return form.received.value;
+}
+function sheetRows() {
+  const pick = {};
+  $$("#sheet-map select").forEach(sel => { pick[sel.dataset.field] = sel.value === "" ? -1 : +sel.value; });
+  const cell = (r, k) => (pick[k] >= 0 ? (r[pick[k]] || "").trim() : "");
+  return SHEET.rows.map(r => ({
+    f: { ticket: cell(r, "ticket").replace(/^#/, ""), customer: cell(r, "customer"), received: sheetDate(cell(r, "received")),
+         contact: cell(r, "contact"), serial: cell(r, "serial"), bin: cell(r, "bin"), barcode: form.barcode.checked },
+    acc: cell(r, "accessories").split(/[,;]/).map(x => x.trim()).filter(Boolean),
+  })).filter(x => x.f.ticket && x.f.customer);
+}
+function showSheet() {
+  const used = new Set();
+  $("#sheet-map").innerHTML = SHEET_FIELDS.map(([k, label, rx]) => {
+    let guess = SHEET.columns.findIndex((c, i) => !used.has(i) && rx.test(c));
+    if (k === "customer" && guess < 0) guess = SHEET.columns.findIndex((c, i) => !used.has(i) && /name/i.test(c));
+    if (guess >= 0) used.add(guess);
+    return `<label class="hint">${label}<select data-field="${k}"><option value="">— not in the sheet —</option>${
+      SHEET.columns.map((c, i) => `<option value="${i}" ${i === guess ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></label>`;
+  }).join("");
+  $$("#sheet-map select").forEach(s => s.onchange = previewSheet);
+  previewSheet();
+  $("#sheet").hidden = false;
+}
+function previewSheet() {
+  const rows = sheetRows(), tags = rows.reduce((n, r) => n + 1 + r.acc.length, 0);
+  $("#sheet-preview").innerHTML = `<tr><th>Ticket #</th><th>Company</th><th>Customer</th><th>Received</th><th>Serial #</th><th>Bin</th><th>Accessories</th></tr>` +
+    rows.slice(0, 50).map(({ f, acc }) => `<tr><td>${esc(f.ticket)}</td><td>${esc(f.customer)}</td><td>${esc(f.contact)}</td><td>${esc(usDate(f.received))}</td>` +
+      `<td>${esc(f.serial)}</td><td>${esc(f.bin)}</td><td>${esc(acc.join(", "))}</td></tr>`).join("");
+  $("#sheet-print").textContent = `Print ${tags} tag${tags === 1 ? "" : "s"} (${rows.length} device${rows.length === 1 ? "" : "s"})`;
+  $("#sheet-print").disabled = !rows.length;
+}
+$("#sheet-open").onclick = () => $("#sheet-file").click();
+$("#sheet-file").onchange = async e => {
+  const file = e.target.files[0]; e.target.value = "";
+  if (!file) return;
+  try {
+    const bin = new Uint8Array(await file.arrayBuffer());
+    let b64 = ""; for (let i = 0; i < bin.length; i += 0x8000) b64 += String.fromCharCode.apply(null, bin.subarray(i, i + 0x8000));
+    SHEET = await api("sheet", { name: file.name, data: btoa(b64) });
+    $("#sheet-name").textContent = `${file.name} · ${SHEET.rows.length} rows${SHEET.truncated ? " (first 2000)" : ""}`;
+    showSheet();
+  } catch (err) { toast(err.message, true); }
+};
+$("#sheet-close").onclick = () => { $("#sheet").hidden = true; SHEET = null; };
+$("#sheet-print").onclick = async () => {
+  const rows = sheetRows(), st = $("#batch-status");
+  if (rows.length > 10 && !confirm(`Print tags for ${rows.length} devices?`)) return;
+  for (const [i, { f, acc }] of rows.entries()) {
+    st.textContent = `Printing ${i + 1} of ${rows.length} devices…`;
+    if (!await printTagSet(f, acc, 1, { wait: true, force: true })) {
+      st.textContent = `Stopped at row ${i + 1} (#${f.ticket}, ${f.customer}) — the rows after it weren't printed.`; return;
+    }
+  }
+  st.textContent = ""; loadCustomers(); jobbar(`✓ Printed tags for all ${rows.length} devices`, "ok");
+};
+
+// ---- been here before? (O): a serial that's typed or scanned → this PC's earlier tags with it + ConnectWise's device
+let devSeq = 0;
+async function deviceLookup() {
+  const serial = form.serial.value.trim(), el = $("#dev-info"), seq = ++devSeq;
+  if (serial.length < 4) { el.hidden = true; return; }
+  let d;
+  try { d = await api("device?serial=" + encodeURIComponent(serial)); } catch { return; }
+  if (seq !== devSeq) return;
+  const parts = [];
+  if (d.before.length) parts.push("<b>Been here before:</b> " + d.before.slice(0, 3).map(b =>
+    `#${esc(b.ticket)} · ${esc(b.customer)} · ${esc(usDate(b.at.slice(0, 10)))}${b.collected ? " (picked up)" : " <b>(not picked up)</b>"}`).join("; "));
+  for (const c of d.cw.slice(0, 2)) parts.push(`ConnectWise: <b>${esc(c.company)}</b> · ${esc([c.name, c.manufacturer, c.model].filter(Boolean).join(" · "))}`);
+  if (d.cw.length === 1 && !form.customer.value.trim()) { form.customer.value = d.cw[0].company; drawTagPreview(); }
+  el.innerHTML = parts.join("<br>") || "First time LabelDesk sees this serial.";
+  el.className = "cwinfo" + (d.before.length || d.cw.length ? " ok" : "");
+  el.hidden = false;
+}
+form.serial.addEventListener("change", deviceLookup);
+form.serial.addEventListener("keydown", e => { if (e.key === "Enter") deviceLookup(); });
+
+// ---- History → Scan a tag (P): the scanner types the ticket # + Enter → its tags, ConnectWise status, picked up?
+async function showTicket(n) {
+  const out = $("#scan-out");
+  let t;
+  try { t = await api("ticket/" + encodeURIComponent(n)); } catch (err) { out.hidden = false; out.textContent = err.message; return; }
+  const parts = t.tags.map(h => h.fields.item ? `${esc(h.fields.item)} (${esc(h.fields.part || "")})` : `Device${h.fields.part ? ` (${esc(h.fields.part)})` : ""}`);
+  out.innerHTML = `<h3>Ticket #${esc(t.ticket)}${t.tags[0] ? ` · ${esc(t.tags[0].fields.customer)}` : ""}</h3>` +
+    (t.cw ? `<p class="hint">ConnectWise: ${esc(t.cw.summary)} · <b>${esc(t.cw.status)}</b>${t.cw.contact ? " · " + esc(t.cw.contact) : ""}</p>` : "") +
+    (t.tags.length ? `<table><tr><th>Tag</th><th>Serial #</th><th>Bin</th><th>Printed</th></tr>${t.tags.map((h, i) =>
+      `<tr><td>${parts[i]}</td><td>${esc(h.fields.serial || "")}</td><td>${esc(h.fields.bin || "")}</td><td>${esc(h.at.replace("T", " ").slice(0, 16))}</td></tr>`).join("")}</table>`
+      : `<p class="hint">No tags printed for this ticket on this PC.</p>`) +
+    (t.tags.length ? `<div class="row actions">${t.collected
+      ? `<span class="picked">✓ Picked up ${esc(t.collected.replace("T", " ").slice(0, 16))}</span> <button class="ghost" type="button" id="scan-undo">Undo</button>`
+      : `<button class="primary" type="button" id="scan-pick">Mark picked up</button>`}</div>` : "");
+  out.hidden = false;
+  const mark = async v => { await api(`ticket/${encodeURIComponent(t.ticket)}/collected`, { collected: v }); showTicket(t.ticket); loadHistory(); };
+  if ($("#scan-pick")) $("#scan-pick").onclick = () => mark(true);
+  if ($("#scan-undo")) $("#scan-undo").onclick = () => mark(false);
+}
+$("#scan").addEventListener("keydown", e => {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  const n = $("#scan").value.trim().replace(/^#/, "");
+  if (/^\d{1,10}$/.test(n)) showTicket(n);
+  $("#scan").select();
+});
+
+// the designer made a layout the tag's layout (Designer → Use for inventory tags)
+document.addEventListener("labeldesk:templates", () => { showTemplates(); drawTagPreview(); });

@@ -164,6 +164,21 @@ class ConnectWise(unittest.TestCase):
     def save(self, **kw):
         return self.call("cw/settings", {"company": "shop", "public": "pub", "private": "priv", "client_id": "client", **kw})
 
+    def test_serial_lookup_finds_the_device_in_connectwise_and_never_without_keys(self):
+        with mock.patch.object(connectwise, "_get", side_effect=AssertionError("network!")) as net:
+            d = self.call("device?serial=PF2ABC")[1]
+        self.assertEqual(d["cw"], [])
+        net.assert_not_called()                                       # ConnectWise off: local history only
+        self.save()
+        d = self.call("device?serial=pf2abc")[1]
+        self.assertEqual([(c["company"], c["name"], c["model"]) for c in d["cw"]], [("Acme Dental Group", "ACME-LT-07", "ThinkPad T14")])
+        self.assertEqual(connectwise.device(app.cw_creds(), 'x" or 1=1'), [])          # odd characters: not even asked
+
+    def test_scan_shows_the_connectwise_ticket(self):
+        self.save()
+        t = self.call("ticket/75013")[1]
+        self.assertEqual((t["cw"]["status"], t["cw"]["summary"]), ("In Progress", "Laptop won't boot"))
+
     def test_not_configured_says_so(self):
         self.assertFalse(self.call("cw/status")[1]["configured"])
         code, r = self.call("cw/ticket/75013")
@@ -473,3 +488,158 @@ class TagLabelSetting(ServerBase):
         self.call("settings/tag-label", {"label": "30252"})
         self.assertTrue(app.config()["flip_tag"])
         app.save_config(flip_tag=False)
+
+
+class HistorySearch(ServerBase):
+    """History: searched on the server over everything printed, filters, 'Show more' paging, CSV export."""
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = app.db()
+        with c:
+            c.execute("DELETE FROM printed")
+            rows = [("tag", "2026-10-01T09:00:00", {"customer": "José Peña", "ticket": "75001", "serial": "PF3XK2LQ"}, None),
+                    ("tag", "2026-10-02T09:00:00", {"customer": "Acme 100%_Co", "ticket": "75002"}, None),
+                    ("ship", "2026-10-03T09:00:00", {"note": "UPS"}, "1Z999AA10123456784"),
+                    ("tag", "2026-10-04T09:00:00", {"free": "Line one\nLine two"}, None)]
+            for i in range(70):
+                rows.append(("tag", f"2026-09-{1 + i % 28:02d}T08:00:00", {"customer": f"Old {i}", "ticket": str(70000 + i)}, None))
+            for kind, at, f, trk in rows:
+                c.execute("INSERT INTO printed(kind, at, copies, fields, state, tracking) VALUES(?,?,?,?,?,?)",
+                          (kind, at, 1, json.dumps(f), "done", trk))
+        c.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        c = app.db()
+        with c:
+            c.execute("DELETE FROM printed")                          # other tests count history rows
+        c.close()
+        super().tearDownClass()
+
+    def find(self, query):
+        return self.call("history?" + query)[1]["items"]
+
+    def test_search_reaches_everything_and_non_ascii(self):
+        self.assertEqual([h["fields"]["ticket"] for h in self.find("q=Pe%C3%B1a")], ["75001"])     # José Peña
+        self.assertEqual([h["fields"]["ticket"] for h in self.find("q=pf3xk")], ["75001"])        # serial, any case
+        self.assertEqual(len(self.find("q=1Z999")), 1)                                            # tracking number
+        self.assertEqual([h["fields"]["ticket"] for h in self.find("q=100%25_")], ["75002"])      # % and _ are literal
+        self.assertEqual(len(self.find("q=Old%2069")), 1)                                         # older than the first page
+
+    def test_filters_and_paging(self):
+        self.assertEqual({h["kind"] for h in self.find("kind=ship")}, {"ship"})
+        self.assertEqual(len(self.find("since=2026-10-02&until=2026-10-03")), 2)                 # 'until' day included
+        first = self.find("limit=60")
+        more = self.find(f"limit=60&before={first[-1]['id']}")
+        self.assertEqual((len(first), len(more)), (60, 14))
+        self.assertFalse({h["id"] for h in first} & {h["id"] for h in more})
+
+    def test_csv_export(self):
+        req = urllib.request.Request(f"http://127.0.0.1:{self.srv.server_port}/api/history.csv?q=Pe%C3%B1a")
+        with urllib.request.urlopen(req) as r:
+            disp, body = r.headers["Content-Disposition"], r.read().decode("utf-8")
+        self.assertIn("attachment", disp)
+        lines = body.lstrip("﻿").splitlines()
+        self.assertEqual(lines[0].split(",")[:3], ["when", "label", "customer"])
+        self.assertEqual(len(lines), 2)
+        self.assertIn("José Peña", lines[1])
+        self.assertIn("PF3XK2LQ", lines[1])
+
+
+class AutoResume(unittest.TestCase):
+    """A paused queue is resumed by itself once its printer answers again (Fedora/Mac)."""
+    def run_heal(self, state, accepting, answers):
+        with mock.patch.object(app.ipp, "printer", return_value={"state": state, "accepting": accepting, "reasons": []}), \
+                mock.patch.object(app.AUTO, "host_for", return_value=("192.0.2.5", 9100)), \
+                mock.patch.object(app.AUTO.ops, "answers", return_value=answers), \
+                mock.patch.object(app, "config", return_value={**app.config(), "auto_resume": True}), \
+                mock.patch.object(app, "resume") as resume:
+            before = len(app.AUTO.since(0))
+            app.heal_once()
+            return resume.call_args_list, app.AUTO.since(0)[before:]
+
+    def test_resumes_when_the_printer_is_back(self):
+        calls, events = self.run_heal("stopped", True, True)
+        self.assertEqual([c.args[0] for c in calls], ["tag", "ship"])
+        self.assertIn("resumed it", events[0]["text"])
+
+    def test_leaves_it_paused_while_the_printer_is_off(self):
+        self.assertEqual(self.run_heal("stopped", False, False)[0], [])
+
+    def test_leaves_working_queues_alone(self):
+        self.assertEqual(self.run_heal("idle", True, True)[0], [])
+
+
+class BeenHereAndPickup(ServerBase):
+    """Been here before? (earlier tags with a serial) and Scan a tag → picked up (this PC's record only)."""
+    def setUp(self):
+        super().setUp()
+        c = app.db()
+        with c:
+            c.execute("DELETE FROM printed")
+            for f in ({"customer": "Acme", "ticket": "75013", "serial": "PF3XK2LQ", "part": "1 of 2"},
+                      {"customer": "Acme", "ticket": "75013", "item": "Charger", "part": "2 of 2"},
+                      {"customer": "Other", "ticket": "750130", "serial": "XPF3XK2LQ"},
+                      {"customer": "Acme", "ticket": "70001", "serial": "pf3xk2lq"}):
+                c.execute("INSERT INTO printed(kind, at, copies, fields, state) VALUES('tag', '2026-10-01T09:00:00', 1, ?, 'done')", (json.dumps(f),))
+        c.close()
+
+    def tearDown(self):
+        c = app.db()
+        with c:
+            c.execute("DELETE FROM printed")
+        c.close()
+
+    def test_been_here_before_matches_the_whole_serial_any_case(self):
+        d = self.call("device?serial=PF3XK2LQ")[1]
+        self.assertEqual(sorted(b["ticket"] for b in d["before"]), ["70001", "75013"])   # not XPF3XK2LQ
+
+    def test_scan_lists_the_tickets_tags_and_marks_picked_up(self):
+        t = self.call("ticket/75013")[1]
+        self.assertEqual(len(t["tags"]), 2)                                              # device + charger, not #750130
+        self.assertIsNone(t["collected"])
+        t = self.call("ticket/75013/collected", {"collected": True})[1]
+        self.assertTrue(t["collected"])
+        self.assertEqual(len([h for h in self.call("history")[1]["items"] if h.get("collected")]), 2)
+        self.assertIsNone(self.call("ticket/75013/collected", {"collected": False})[1]["collected"])
+
+
+class Designer(ServerBase):
+    """Designer: every DYMO label from stocks.json, printing on any of them, the shop's templates (templates/)."""
+    def test_stocks_come_from_dymos_drivers(self):
+        s = {x["sku"]: x for x in self.call("stocks")[1]["stocks"]}
+        self.assertEqual((s["30336"]["page"], s["1744907"]["printers"]), ("w72h154.1", ["5XL"]))
+        self.assertGreater(len(s), 40)
+
+    def test_print_on_another_label_uses_its_page_and_skips_the_carrier_check(self):
+        done = subprocess.CompletedProcess([], 0, "request id is Dymo-5XL-8 (1 file(s))\n", "")
+        with mock.patch.object(app.subprocess, "run", return_value=done) as run, \
+                mock.patch.object(app.barcode, "check", side_effect=AssertionError("carrier check on a designed label")):
+            code, r = self.call("print", {"kind": "ship", "png": PNG, "copies": 1, "fields": {}, "stock": "w296h452"})   # 4×6 on the 5XL
+        self.assertEqual(code, 200, r)
+        self.assertTrue(any(a.startswith("PageSize=") for a in run.call_args.args[0]))
+        with mock.patch.object(app.subprocess, "run", return_value=done) as run:
+            self.call("print", {"kind": "tag", "png": PNG, "copies": 1, "fields": {}, "stock": "w72h154.1", "force": True})
+        self.assertIn("PageSize=w72h154.1", run.call_args.args[0])
+
+    def test_a_printer_that_doesnt_take_the_label_is_refused(self):
+        code, r = self.call("print", {"kind": "tag", "png": PNG, "copies": 1, "fields": {}, "stock": "w296h452"})   # 4×6 on the 550
+        self.assertEqual(code, 400)
+        self.assertIn("doesn't take", r["error"])
+        self.assertEqual(self.call("print", {"kind": "tag", "png": PNG, "copies": 1, "fields": {}, "stock": "nope"})[0], 400)
+
+    def test_sharing_writes_templates_and_refuses_pictures(self):
+        d = tempfile.mkdtemp()
+        tpl = {"name": "Asset tag — big!", "stock": "w79h252", "orientation": "Landscape", "rect": {"x": 0, "y": 0, "w": 3.2, "h": 1},
+               "objects": [{"kind": "text", "format": "{company}", "x": 0, "y": 0, "w": 3, "h": 0.5, "lines": [{"size": 12}]}]}
+        with mock.patch.object(app, "TEMPLATES_DIR", d), mock.patch.object(app.os.path, "isdir", return_value=True):
+            code, r = self.call("templates/share", {"template": tpl})
+            self.assertEqual(code, 200, r)
+            self.assertTrue(r["path"].endswith("asset-tag-big.json"))
+            shop = self.call("templates/shared")[1]["templates"]
+            self.assertEqual((shop[0]["name"], shop[0]["id"], shop[0]["shared"]), ("Asset tag — big!", "shop:asset-tag-big", True))
+            pic = {**tpl, "objects": tpl["objects"] + [{"kind": "image", "src": "data:image/png;base64,AAAA"}]}
+            code, r = self.call("templates/share", {"template": pic})
+            self.assertEqual(code, 400)
+            self.assertIn("public", r["error"])

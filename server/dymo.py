@@ -189,6 +189,35 @@ def collect(records):
     return list(found.values())
 
 
+def browse_cups(seconds=20):
+    """Ask CUPS which DYMO printers it sees on Bonjour (`lpinfo --include-schemes dnssd -v`). For the Mac: cupsd is a
+    system daemon, so macOS's Local Network privacy (which stops LabelDesk's own scan from its LaunchAgent) doesn't apply.
+    → [{name, model, uri, port}] (no IP: queues use the dnssd:// URI and CUPS finds the printer each time)."""
+    import subprocess
+    import urllib.parse
+    try:
+        out = subprocess.run(["lpinfo", "--include-schemes", "dnssd", "-v"], capture_output=True, text=True, timeout=seconds).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return parse_lpinfo(out)
+
+
+def parse_lpinfo(out):
+    import urllib.parse
+    found = {}
+    for line in out.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) != 2 or not parts[1].startswith("dnssd://"):
+            continue
+        uri = parts[1].strip()
+        name = urllib.parse.unquote(uri[8:].split("._", 1)[0])
+        model = model_of(name)
+        if model and ("._pdl-datastream." in uri or name not in found):   # prefer raw printing (port 9100) like the scan
+            found[name] = {"name": name, "model": model, "uri": uri.split("?", 1)[0] if "._pdl-datastream." in uri else uri,
+                           "port": PORT}
+    return list(found.values())
+
+
 LAST = {"error": None}                                           # why the last browse found nothing (shown in Settings)
 
 

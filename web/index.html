@@ -13,6 +13,7 @@
   <nav>
     <button data-tab="tag" class="on">Inventory tag</button>
     <button data-tab="ship">Shipping label</button>
+    <button data-tab="designer">Designer</button>
     <button data-tab="history">History</button>
     <button data-tab="settings">Settings</button>
   </nav>
@@ -35,6 +36,19 @@
         <div class="row">
           <label>Customer name <small>(optional)</small><input name="contact" autocomplete="off"></label>
           <label class="check contactcheck"><input type="checkbox" name="showContact"> On the tag</label>
+        </div>
+        <div class="row">
+          <label>Serial # <small>(optional — scan it)</small><input name="serial" autocomplete="off" spellcheck="false"></label>
+          <label class="bin">Shelf / bin <small>(optional)</small><input name="bin" autocomplete="off"></label>
+        </div>
+        <div id="dev-info" class="cwinfo" hidden></div>
+        <label>Accessories <small>(optional — each gets its own tag with the same ticket #)</small>
+          <input name="accessories" autocomplete="off" placeholder="e.g. Charger, Dock"></label>
+        <div class="chips" id="acc-chips">
+          <button type="button" class="chip">Charger</button><button type="button" class="chip">Power brick</button>
+          <button type="button" class="chip">Dock</button><button type="button" class="chip">Bag</button>
+          <button type="button" class="chip">Mouse</button><button type="button" class="chip">Keyboard</button>
+          <button type="button" class="chip">Monitor</button>
         </div>
         <div class="row">
           <label class="check"><input type="checkbox" name="barcode"> Barcode of the ticket #</label>
@@ -78,7 +92,19 @@
     <div id="tag-batch" class="card" hidden>
       <h2>Batch <small>one device per line: <code>Customer, Ticket #</code> — all with the date above</small></h2>
       <textarea id="batch-text" rows="8" placeholder="Acme Dental, 75013&#10;Jane Smith, 75014"></textarea>
-      <div class="row actions"><button class="primary" id="batch-print">Print all</button><span id="batch-status" class="hint"></span></div>
+      <div class="row actions"><button class="primary" id="batch-print">Print all</button>
+        <button type="button" class="ghost" id="sheet-open">Open spreadsheet… <small>(Excel or CSV)</small></button>
+        <input type="file" id="sheet-file" accept=".xlsx,.csv,.txt,.xls" hidden>
+        <span id="batch-status" class="hint"></span></div>
+      <div id="sheet" hidden>
+        <h2>Spreadsheet <small id="sheet-name"></small></h2>
+        <p class="hint">Which column goes where (guessed from the headings — change any). One tag per row; a row's
+          accessories get their own tags. Rows without a ticket # or company are skipped.</p>
+        <div class="sheet-map" id="sheet-map"></div>
+        <div class="tablewrap"><table id="sheet-preview"></table></div>
+        <div class="row actions"><button class="primary" type="button" id="sheet-print">Print</button>
+          <button class="ghost" type="button" id="sheet-close">Close</button></div>
+      </div>
     </div>
   </section>
 
@@ -147,6 +173,20 @@
           <option value="30321">30321 Large Address · 1.4″ × 3½″</option>
         </select></label>
       <p class="hint" id="roll-auto"></p>
+      <label class="hint">Tag barcode (when "Barcode" is ticked)
+        <select id="tag-barcode">
+          <option value="code128">Code 128 — compact (recommended)</option>
+          <option value="code39">Code 39 — for older scanners</option>
+        </select></label>
+      <h2>Shipping labels</h2>
+      <label class="check"><input type="checkbox" id="auto-ship"> Print shipping labels from Downloads by themselves</label>
+      <p class="hint">When a UPS/FedEx/USPS label PDF arrives in Downloads (or from the "Shipping Label" printer), LabelDesk
+        finds the label, checks its tracking barcode scans and that it hasn't printed that tracking # before, then prints it
+        after a 5-second countdown you can cancel. Anything it isn't sure about waits for you, as before.</p>
+      <h2>Printers</h2>
+      <div class="printer-cards" id="printer-cards"></div>
+      <p class="hint">A printer that gets paused (switched off, cable out) is resumed by itself once it answers again
+        (Fedora and Mac; on Windows press Resume).</p>
       <h2>Printers on the network</h2>
       <p class="hint">LabelDesk looks for the DYMO printers by itself when it starts and every few minutes: it sets up a
         printer it finds for the first time and follows one whose address changed. Other DYMO printers it finds are listed
@@ -210,11 +250,72 @@
   </section>
 
   <!-- ================= history ================= -->
+  <!-- ================= label designer: any DYMO label ================= -->
+  <section id="tab-designer" class="tab" hidden>
+    <div class="designer">
+      <div class="card dz-side">
+        <h2>Label designer</h2>
+        <label>Layout <select id="dz-open"></select></label>
+        <label>Name <input id="dz-name" autocomplete="off"></label>
+        <label>Label <select id="dz-stock"></select></label>
+        <label>Direction <select id="dz-orient">
+          <option value="Landscape">Along the label (like the tag)</option><option value="Portrait">Upright</option></select></label>
+        <label class="check"><input type="checkbox" id="dz-flip"> Rotate 180°</label>
+        <h2>Add</h2>
+        <div class="chips" id="dz-add">
+          <button type="button" class="chip" data-add="text">Text</button><button type="button" class="chip" data-add="field">Field</button>
+          <button type="button" class="chip" data-add="barcode">Barcode</button><button type="button" class="chip" data-add="qr">QR code</button>
+          <button type="button" class="chip" data-add="image">Picture</button><button type="button" class="chip" data-add="line">Line</button>
+          <button type="button" class="chip" data-add="box">Box</button>
+        </div>
+        <ol id="dz-objects" class="dz-objects"></ol>
+        <div class="row actions">
+          <button type="button" class="primary" id="dz-save">Save</button>
+          <button type="button" class="ghost" id="dz-tag" title="Print inventory tags with this layout">Use for inventory tags</button>
+          <button type="button" class="ghost" id="dz-delete">Delete</button>
+        </div>
+        <div class="row actions">
+          <button type="button" class="ghost" id="dz-export">Export</button>
+          <button type="button" class="ghost" id="dz-import-btn">Import… <small>(.json / .dymo)</small></button>
+          <button type="button" class="ghost" id="dz-share" title="Send it to the owner for every PC (pull request)">Share with the shop</button>
+          <input type="file" id="dz-import" accept=".json,.dymo" hidden><input type="file" id="dz-picture" accept="image/*" hidden>
+        </div>
+      </div>
+      <div class="card dz-main">
+        <div class="dz-stage"><canvas id="dz-canvas" tabindex="0" title="Click to select · drag to move · drag the corner to resize · arrow keys nudge"></canvas></div>
+        <p class="hint" id="dz-size"></p>
+        <div id="dz-props" class="dz-props"></div>
+        <h2>Print it</h2>
+        <div class="dz-fields">
+          <label>Company<input data-f="customer"></label><label>Customer name<input data-f="contact"></label>
+          <label>Ticket #<input data-f="ticket" inputmode="numeric"></label><label>Received<input data-f="received" type="date"></label>
+          <label>Serial #<input data-f="serial"></label><label>Shelf / bin<input data-f="bin"></label><label>Accessory<input data-f="item"></label>
+        </div>
+        <div class="row actions">
+          <label>Printer <select id="dz-printer"><option value="tag">550 Turbo</option><option value="ship">5XL</option></select></label>
+          <label class="copies">Copies<input id="dz-copies" type="number" min="1" max="99" value="1"></label>
+          <button type="button" class="primary" id="dz-print">Print</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section id="tab-history" class="tab" hidden>
     <div class="card">
-      <h2>Printed <small>last 60</small></h2>
-      <input id="hist-filter" placeholder="Filter by customer or ticket…">
+      <h2>Scan a tag</h2>
+      <div class="row"><label>Ticket # <small>(scan the tag's barcode)</small><input id="scan" inputmode="numeric" autocomplete="off"
+        placeholder="Scan or type, then Enter"></label></div>
+      <div id="scan-out" hidden></div>
+      <h2>Printed <small id="hist-count"></small></h2>
+      <div class="row hist-tools">
+        <input id="hist-filter" type="search" placeholder="Search everything printed: customer, ticket, serial, tracking #…">
+        <select id="hist-kind"><option value="">All labels</option><option value="tag">Inventory tags</option><option value="ship">Shipping labels</option></select>
+        <label class="hint">From <input type="date" id="hist-since"></label>
+        <label class="hint">to <input type="date" id="hist-until"></label>
+        <a class="ghost button" id="hist-csv" href="api/history.csv" download>Export CSV</a>
+      </div>
       <table id="history"><thead><tr><th>When</th><th>Label</th><th>Details</th><th>Copies</th><th>Printed</th><th></th></tr></thead><tbody></tbody></table>
+      <div class="row actions"><button class="ghost" type="button" id="hist-more" hidden>Show more</button></div>
     </div>
   </section>
 </main>
@@ -222,5 +323,6 @@
 <div id="updatebar" hidden><span class="msg"></span><span class="acts"></span></div>
 <div id="toast" hidden></div>
 <script type="module" src="app.js"></script>
+<script type="module" src="designer.js"></script>
 </body>
 </html>
