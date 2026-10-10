@@ -164,6 +164,11 @@
           <option value="code128">Code 128 — compact (recommended)</option>
           <option value="code39">Code 39 — for older scanners</option>
         </select></label>
+      <h2>Shipping labels</h2>
+      <label class="check"><input type="checkbox" id="auto-ship"> Print shipping labels from Downloads by themselves</label>
+      <p class="hint">When a UPS/FedEx/USPS label PDF arrives in Downloads (or from the "Shipping Label" printer), LabelDesk
+        finds the label, checks its tracking barcode scans and that it hasn't printed that tracking # before, then prints it
+        after a 5-second countdown you can cancel. Anything it isn't sure about waits for you, as before.</p>
       <h2>Printers</h2>
       <div class="printer-cards" id="printer-cards"></div>
       <p class="hint">A printer that gets paused (switched off, cable out) is resumed by itself once it answers again

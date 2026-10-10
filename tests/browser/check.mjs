@@ -2,7 +2,8 @@
 //   node check.mjs <devtools port> <sample pdf> <downloads dir>
 // 1. pdf.js opens the sample and reads its text          (pdfPage — a PDF that won't open breaks the Shipping tab)
 // 2. the same PDF saved to Downloads opens by itself on the Shipping tab, label found  (inbox → dataBlob → loadShip)
-// 3. no uncaught errors or inbox warnings on the page
+// 3. hands-free shipping counts down and can be cancelled
+// 4. no uncaught errors or inbox warnings on the page
 import { copyFileSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
@@ -58,6 +59,23 @@ for (let i = 0; i < 40; i++) {
 }
 check(state?.tab && state?.src, "a label saved to Downloads opens by itself on the Shipping tab", JSON.stringify(state));
 check(!!state?.how && state.how !== "none", "the label is found on the page", state?.how || "");
+// 4. hands-free shipping (Settings, opt-in): the next label from Downloads counts down by itself — cancelled here
+await run(`(() => { document.getElementById("ship-clear").click(); const c = document.getElementById("auto-ship");
+  if (!c.checked) c.click(); return true; })()`);
+await sleep(800);
+copyFileSync(pdf, join(downloads, "browser-check-2-" + basename(pdf)));
+let bar = "";
+for (let i = 0; i < 40; i++) {
+  await sleep(500);
+  bar = await run(`document.querySelector("#jobbar .msg")?.textContent || ""`).catch(() => "");
+  if (/by itself/.test(bar)) break;
+}
+check(/printing .* by itself in \d s/i.test(bar), "a label from Downloads counts down to print by itself (opt-in)", bar.slice(0, 90));
+await run(`(() => { const b = [...document.querySelectorAll("#jobbar button")].find(b => b.textContent === "Cancel"); b?.click(); return !!b; })()`);
+await sleep(1500);
+bar = await run(`document.querySelector("#jobbar .msg")?.textContent || ""`).catch(() => "");
+check(/Cancelled/.test(bar), "Cancel stops it", bar.slice(0, 60));
+await run(`(() => { const c = document.getElementById("auto-ship"); if (c.checked) c.click(); return true; })()`);
 check(!problems.length, "no errors on the page", problems.join(" | ").slice(0, 300));
 
 ws.close();

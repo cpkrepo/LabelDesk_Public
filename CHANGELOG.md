@@ -7,6 +7,9 @@ installer attached) and any of them can be brought back with `tools/rollback.sh 
 the owner's `tools/update.sh` turns that heading into the version number when it publishes.
 
 ## Unreleased
+- **Hands-free shipping (opt-in, Settings → Shipping labels):** a UPS/FedEx/USPS label PDF that lands in Downloads
+  prints by itself after a 5-second countdown you can cancel — only when the label was found, its tracking barcode
+  scans, and that tracking # hasn't printed before. Anything uncertain waits for you, as before.
 - **Intake tags:** optional **Serial #** (scan it off the laptop — the scanner's Enter moves on instead of printing) and
   **Shelf / bin**, printed on one small line and searchable in History.
 - **Accessory tags:** list what came with the device (or tap Charger, Dock, Bag…) and LabelDesk prints the device tag

@@ -784,6 +784,42 @@ $("#ship-print").onclick = async () => {
     $("#ship-clear").click();
 };
 
+// ---- hands-free shipping (Settings, off by default): a label that arrived by itself prints by itself — only when it's
+// certain: the label was found on the page, its carrier tracking barcode reads, and that tracking # never printed here
+let autoShipCancel = null;
+async function autoShip(item) {
+  if (!SHIP.src || SHIP.how === "none" || busy) return;
+  const canvas = drawShip(document.createElement("canvas"));
+  const check = await checkBarcode(canvas);
+  if (!check.ok || !check.tracking) {
+    return jobbar(`Not printed by itself: ${check.ok ? "no carrier tracking # found" : check.message} — check it and press Print`, "wait");
+  }
+  const tracking = check.tracking.replace(/\s/g, "");
+  let before = [];
+  for (const q of new Set([tracking, check.tracking])) {         // stored with or without the spaces FedEx numbers get
+    try { before.push(...(await api("history?kind=ship&limit=5&q=" + encodeURIComponent(q))).items.filter(h => h.state !== "failed")); } catch {}
+  }
+  if (before.length) {
+    return jobbar(`${check.carrier} ${check.tracking} was already printed ${before[0].at.slice(0, 10)} — not printed again by itself`,
+                  "wait", [["Print anyway", () => $("#ship-print").click()], ["Clear", () => { $("#ship-clear").click(); jobbar(""); }]]);
+  }
+  let cancelled = false;
+  autoShipCancel = () => { cancelled = true; jobbar("Cancelled — press Print when you want it", "wait"); };
+  for (let s = 5; s > 0 && !cancelled; s--) {
+    jobbar(`Printing ${check.carrier} ${check.tracking} by itself in ${s} s…`, "wait", [["Cancel", autoShipCancel]]);
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  autoShipCancel = null;
+  if (cancelled) return;
+  const note = `${item.name} — printed by itself (${item.source}), label found, turned ${SHIP.turn}°`;
+  if (await printCanvas("ship", canvas, 1, { note }, `${check.carrier} ${check.tracking}`)) $("#ship-clear").click();
+}
+$("#auto-ship").onchange = async e => {
+  try { await api("settings/auto-ship", { on: e.target.checked }); CFG = await api("config");
+        toast(e.target.checked ? "Shipping labels from Downloads print by themselves" : "Shipping labels wait for you again"); }
+  catch (err) { toast(err.message, true); e.target.checked = !!CFG.autoShip; }
+};
+
 // ------------------------------------------------------------------ history
 let HIST = [];
 // History: searched on the server over everything ever printed on this PC; 60 at a time, "Show more" for older
@@ -956,6 +992,7 @@ async function pollInbox(open = true) {
     showTab("ship");
     if (src) useShipSource(src, item.name); else await loadShip(blob, item.name);
     toast(`New label from ${item.source}: ${item.name}`);
+    if (CFG.autoShip) await autoShip(item);
   };
   if (SHIP.src) jobbar(`New label from ${item.source}: ${item.name}`, "wait", [["Open it", openIt], ["Later", () => jobbar("")]]);
   else openIt();
@@ -981,6 +1018,7 @@ window.addEventListener("focus", rollDate);
   $("#flip").checked = flip();
   $("#tag-label").value = CFG.tagLabel;
   $("#tag-barcode").value = CFG.tagBarcode || "code128";
+  $("#auto-ship").checked = !!CFG.autoShip;
   $("#tag-stock").textContent = `${CFG.tagLabel} · ${CFG.labels.tag.size}`;
   try { form.showContact.checked = JSON.parse(localStorage.getItem("showContact")) ?? false; } catch {}
   $("#win-printer").hidden = $("#win-dymo").hidden = CFG.platform !== "windows";
