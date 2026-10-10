@@ -26,7 +26,7 @@ import base64, html, io, json, re, sys
 from PIL import Image
 d = json.loads(html.unescape(re.search(r'<pre id="out">(.*?)</pre>', open(sys.argv[1]).read(), re.S).group(1)))
 assert d["c128_width_errors"] == 0, "Code 128 table has a pattern of the wrong width"
-for k in ("tag", "long_bar", "contact_bar", "offset_bar", "template_bar", "template_c39", "template_qr", "blank", "intake_bar",
+for k in ("tag", "long_bar", "contact_bar", "home_bar", "offset_bar", "template_bar", "template_c39", "template_qr", "blank", "intake_bar",
           "accessory_bar", "full_bar"):
     im = Image.open(io.BytesIO(base64.b64decode(d[k].split(",")[1])))
     want = {"30252": (298, 962), "30321": (391, 960)}[sys.argv[3]]

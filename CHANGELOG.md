@@ -7,6 +7,8 @@ installer attached) and any of them can be brought back with `tools/rollback.sh 
 the owner's `tools/update.sh` turns that heading into the version number when it publishes.
 
 ## Unreleased
+- **Customer name goes after the company** on the tag's top line — "Destify - Chris Killion" — instead of a line
+  of its own. A home customer's name is the company, so it isn't printed twice.
 
 ## 0.9.0 — 2026-10-10
 - **Label designer** (new Designer tab): any of the 65 DYMO labels the 550 Turbo and 5XL take — text, fields that fill

@@ -116,13 +116,18 @@ export function drawTag(canvas, f, flip = false, offsetMm = tagOffset(), tpl = a
   const w = right - left;
   ctx.fillStyle = "#000"; ctx.textBaseline = "alphabetic";
   const bar = f.barcode && f.ticket;
-  const name = f.customer || "Customer";
-  // a long customer name: one line down to 56 px, else two lines (split at the space nearest the middle)
+  // the person's name goes after the company ("Destify - Chris Killion"); a home customer is the company already
+  const company = f.customer || "Customer", person = f.contact || "";
+  const name = person && !company.toLowerCase().includes(person.toLowerCase()) ? `${company} - ${person}` : company;
+  // a long name: one line down to 56 px, else two lines (split after the company, or at the space nearest the middle)
   let nameLines = [name], nameMax = z(bar ? 88 : 104);
   if (fit(ctx, name, w, nameMax, z(56)) === z(56) && ctx.measureText(name).width > w && name.includes(" ")) {
-    const spaces = [...name.matchAll(/ /g)].map(m => m.index);
-    const cut = spaces.reduce((a, b) => Math.abs(b - name.length / 2) < Math.abs(a - name.length / 2) ? b : a);
-    nameLines = [name.slice(0, cut), name.slice(cut + 1)];
+    if (name !== company) nameLines = [company + " -", person];
+    else {
+      const spaces = [...name.matchAll(/ /g)].map(m => m.index);
+      const cut = spaces.reduce((a, b) => Math.abs(b - name.length / 2) < Math.abs(a - name.length / 2) ? b : a);
+      nameLines = [name.slice(0, cut), name.slice(cut + 1)];
+    }
     nameMax = z(bar ? 52 : 62);
   }
   // intake details on one small line: S/N (scanned) and shelf/bin; an accessory tag says what it is and "2 of 3"
@@ -130,10 +135,9 @@ export function drawTag(canvas, f, flip = false, offsetMm = tagOffset(), tpl = a
   const item = f.item ? `${f.item}${f.part ? ` · ${f.part}` : ""}` : (f.part ? `Device · ${f.part}` : "");
   const extra = [item && { t: item, size: z(bar ? 50 : 60), min: z(28), weight: "700" },
                  intake && { t: intake, size: z(bar ? 40 : 48), min: z(24), weight: "400" }].filter(Boolean);
-  const small = !!f.contact || nameLines.length > 1 || extra.length > 0;   // a 4th line: everything a little smaller
+  const small = nameLines.length > 1 || extra.length > 0;    // a 4th line: everything a little smaller
   const lines = [
     ...nameLines.map(t => ({ t, size: small ? Math.min(nameMax, z(78)) : nameMax, min: z(30), weight: "700", name: true })),
-    ...(f.contact ? [{ t: f.contact, size: z(bar ? 44 : 54), min: z(28), weight: "400" }] : []),
     ...extra,
     { t: `Received: ${usDate(f.received)}`, size: z(small ? (bar ? 42 : 50) : (bar ? 54 : 62)), min: z(28), weight: "400" },
     { t: `Ticket#: ${f.ticket || ""}`, size: z(small ? (bar ? 56 : 68) : (bar ? 70 : 88)), min: z(32), weight: "700" },
