@@ -1424,9 +1424,22 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"error": str(e)}, 502)
 
 
+class Server(ThreadingHTTPServer):
+    # Windows' SO_REUSEADDR lets a second server bind a port that's in use (both would watch the inbox → double prints);
+    # Windows binds exclusively without it
+    allow_reuse_address = not WINDOWS
+
+
 def main():
     global INBOX
     cfg = config()
+    # the port first: a second copy (the installer and the update helper both start one) stops here, before it
+    # watches the inbox or prints
+    try:
+        srv = Server((cfg["bind"], cfg["port"]), Handler)
+    except OSError as e:
+        print(f"LabelDesk is already running on port {cfg['port']} ({e}) — this copy exits", flush=True)
+        return
     dl = os.environ.get("LABELDESK_DOWNLOADS") or downloads_dir()
     dirs = ([] if MAC else [(SPOOL, True)]) + ([(dl, False)] if cfg["watch_downloads"] else [])   # Mac: no print-dialog printer
     INBOX = Inbox(dirs)
@@ -1441,7 +1454,6 @@ def main():
     print(f"LabelDesk {VERSION} on http://{cfg['bind']}:{cfg['port']}  tag→{queue_for('tag')}  ship→{queue_for('ship')}  "
           f"watching {', '.join(d for d, _ in dirs)}  zbar {'on' if barcode.available() else 'off (the browser checks barcodes)'}",
           flush=True)
-    srv = ThreadingHTTPServer((cfg["bind"], cfg["port"]), Handler)
     srv.daemon_threads = True
     srv.serve_forever()
 

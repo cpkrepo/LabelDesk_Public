@@ -227,7 +227,9 @@ Upload the `.sha256` too: Install update refuses an installer without a matching
   - **Fedora and Mac with your own changes:** the notice shows `tools/update.sh` to run in a Terminal, so your changes get merged
     and pushed (section 6).
   - **Windows:** **Install update** downloads the installer from the release, checks its SHA-256, installs it and
-    restarts LabelDesk. Settings, history and the logo are kept.
+    restarts LabelDesk. Settings, history and the logo are kept. Installing a newer `.msi` by double-clicking it works
+    too, over any older version, with LabelDesk running — no uninstall. **PCs on 0.8.1 or older:** their Install update
+    button doesn't work; double-click the newest `LabelDesk-<version>.msi` from the Releases page once.
 - **Turn the check off:** add `"update_check": false` to `~/.config/labeldesk/config.json`
   (Mac: `~/Library/Application Support/LabelDesk/config.json`; Windows: `%APPDATA%\LabelDesk\config.json`) and restart LabelDesk.
 - **Uninstall on a Mac:** `tools/install-app.sh --remove`, then delete `~/LabelDesk_Public` (history stays in

@@ -7,6 +7,11 @@ installer attached) and any of them can be brought back with `tools/rollback.sh 
 the owner's `tools/update.sh` turns that heading into the version number when it publishes.
 
 ## Unreleased
+- **Windows: installing a new version no longer needs an uninstall first.** The installer now stops the running
+  LabelDesk itself and starts the new one when it's done — before, Windows asked to close "Python", couldn't, and the
+  PC kept running the old version until a restart. PCs on 0.8.1 or older: download the newest `LabelDesk-<version>.msi`
+  from the Releases page and double-click it once (their **Install update** button can't work); from then on
+  **Install update** does it.
 
 ## 0.9.1 — 2026-10-10
 - **Customer name goes after the company** on the tag's top line — "Acme Dental Group - Jane Smith" — instead of a line

@@ -21,8 +21,29 @@
       <UpgradeVersion Minimum="0.0.0" Maximum="@VERSION@" IncludeMaximum="no" Property="OLDER_FOUND"/>
       <UpgradeVersion Minimum="@VERSION@" IncludeMinimum="no" OnlyDetect="yes" Property="NEWER_FOUND"/>
     </Upgrade>
+    <!-- Upgrades with LabelDesk running (it always is: Startup folder). Its server is a windowless pythonw, which Windows'
+         "close these applications: Python" dialog can't close: the old server kept running, Python's files were only
+         replaced at the next reboot and the PC showed the old version (2026-10-16, 0.5.0 → 0.9.1 on the test VM). So stop
+         every process running from LabelDesk's own python folder before InstallValidate checks for files in use, and
+         start the new server after the install. The command is -EncodedCommand (UTF-16LE base64) because MSI would
+         read [ ] in PowerShell as properties; source: Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath
+         -like '*\Programs\LabelDesk\python\python*.exe' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force
+         -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 700 -->
+    <!-- wixl has no Directory= custom actions: set a property to the program, then run that property (types 51 + 50) -->
+    <CustomAction Id="SetPowerShell" Property="LD_POWERSHELL" Value="[SystemFolder]WindowsPowerShell\v1.0\powershell.exe"/>
+    <CustomAction Id="StopLabelDesk" Property="LD_POWERSHELL" Execute="immediate" Return="ignore"
+                  ExeCommand="-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand RwBlAHQALQBDAGkAbQBJAG4AcwB0AGEAbgBjAGUAIABXAGkAbgAzADIAXwBQAHIAbwBjAGUAcwBzACAAfAAgAFcAaABlAHIAZQAtAE8AYgBqAGUAYwB0ACAAewAgACQAXwAuAEUAeABlAGMAdQB0AGEAYgBsAGUAUABhAHQAaAAgAC0AbABpAGsAZQAgACcAKgBcAFAAcgBvAGcAcgBhAG0AcwBcAEwAYQBiAGUAbABEAGUAcwBrAFwAcAB5AHQAaABvAG4AXABwAHkAdABoAG8AbgAqAC4AZQB4AGUAJwAgAH0AIAB8ACAARgBvAHIARQBhAGMAaAAtAE8AYgBqAGUAYwB0ACAAewAgAFMAdABvAHAALQBQAHIAbwBjAGUAcwBzACAALQBJAGQAIAAkAF8ALgBQAHIAbwBjAGUAcwBzAEkAZAAgAC0ARgBvAHIAYwBlACAALQBFAHIAcgBvAHIAQQBjAHQAaQBvAG4AIABTAGkAbABlAG4AdABsAHkAQwBvAG4AdABpAG4AdQBlACAAfQA7ACAAUwB0AGEAcgB0AC0AUwBsAGUAZQBwACAALQBNAGkAbABsAGkAcwBlAGMAbwBuAGQAcwAgADcAMAAwAA=="/>
+    <CustomAction Id="SetPythonw" Property="LD_PYTHONW" Value="[INSTALLDIR]python\pythonw.exe"/>
+    <CustomAction Id="StartLabelDesk" Property="LD_PYTHONW" Execute="immediate" Return="asyncNoWait"
+                  ExeCommand="&quot;[INSTALLDIR]labeldesk-server.pyw&quot;"/>
     <InstallExecuteSequence>
-      <RemoveExistingProducts After="InstallValidate"/>
+      <!-- explicit numbers: wixl's After= ordering put RemoveExistingProducts behind InstallFinalize once Custom rows were added
+           (CostFinalize 1000 · InstallValidate 1400 · InstallFinalize 6600) -->
+      <Custom Action="SetPowerShell" Sequence="1001"/>
+      <Custom Action="StopLabelDesk" Sequence="1002"/>
+      <RemoveExistingProducts Sequence="1401"/>
+      <Custom Action="SetPythonw" Sequence="6601">NOT (REMOVE~="ALL")</Custom>
+      <Custom Action="StartLabelDesk" Sequence="6602">NOT (REMOVE~="ALL")</Custom>
     </InstallExecuteSequence>
 
     <Directory Id="TARGETDIR" Name="SourceDir">
@@ -33,6 +54,7 @@
       </Directory>
       <Directory Id="ProgramMenuFolder"/>
       <Directory Id="StartupFolder"/>
+      <Directory Id="SystemFolder"/>
     </Directory>
 
     <DirectoryRef Id="ProgramMenuFolder">

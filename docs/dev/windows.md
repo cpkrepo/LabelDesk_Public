@@ -26,7 +26,7 @@ Owner wants each PC **independent** (no shared server). Same app; only printing 
   (.github/workflows/windows-installer.yml, wixl on ubuntu-24.04) and attach LabelDesk-<v>.msi + .sha256 to the release.
   "Install update" downloads both, refuses a checksum mismatch, writes %LOCALAPPDATA%\LabelDesk\update\install-update.ps1,
   starts it detached and exits; the script waits for the server's PID, runs msiexec /i /qb (per user, no admin;
-  RemoveExistingProducts replaces the old version) and starts labeldesk-server.pyw again. NOT yet run on Windows.
+  RemoveExistingProducts replaces the old version) and starts labeldesk-server.pyw again. Tested 2026-10-16 (0.9.1 → 0.9.2).
 - Printers by IP: Settings → DYMO printers by IP runs printer-check.ps1 (read-only, output shown) and
   add-dymo-printer.ps1 -Pause in an elevated window. Both ship in the MSI root.
 
@@ -44,3 +44,19 @@ Owner wants each PC **independent** (no shared server). Same app; only printing 
 - VM testing: start LabelDesk the way users do (explorer opening the Startup shortcut) — a scheduled task running
   pythonw directly kills its children when it exits. Send PowerShell scripts as ASCII files (PS 5 misreads UTF-8 without BOM).
 
+## Upgrading with LabelDesk running — fixed in 0.9.2, tested on the VM 2026-10-16
+- Coworkers had to uninstall before installing a new version. Cause: the server (windowless pythonw.exe from the
+  Startup folder) is always running; the MSI's files-in-use check showed "close these applications: Python", OK couldn't
+  close it, the install "succeeded" with python files queued for the next reboot, and the old server kept answering.
+- Fix in windows/labeldesk.wxs: custom action StopLabelDesk (seq 1002, before InstallValidate) kills processes whose path
+  is …\Programs\LabelDesk\python\python*.exe (PowerShell -EncodedCommand; wixl has no Directory= CAs → types 51+50),
+  StartLabelDesk (seq 6602, async, not on uninstall) starts labeldesk-server.pyw. Sequence numbers are explicit: wixl's
+  After= moved RemoveExistingProducts behind InstallFinalize. The new MSI's actions govern, so this covers upgrades FROM
+  any older version. server/app.py binds its port first and exclusively on Windows (SO_REUSEADDR let a second copy bind
+  the same port → two inbox watchers), so the installer + update helper both starting it is harmless.
+- Matrix (each from a clean install, server started via the Startup shortcut, then checked: one product, one server in
+  session 1, VERSION, shortcuts, %APPDATA% kept, no PendingFileRenameOperations): 0.5.0 / 0.7.0 / 0.8.1 → 0.9.2 by
+  double-click; 0.9.1 → 0.9.2 by Install update (RELEASE_API pointed at a fake release on the host); 0.9.2 reinstalled
+  over itself; uninstall while running. Harness: C:\ldtest on the VM (st/clean/inst/start/upd/un/ir.ps1; ir.ps1 runs a
+  step in labtest's interactive session like a double-click). Dialogs: screendump via the QEMU monitor; QEMU sendkey
+  doesn't reach them — AppActivate + SendKeys from an interactive scheduled task does.
