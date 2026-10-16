@@ -70,7 +70,9 @@ class Server(ServerBase):
         self.assertEqual((code, r["job"]), (200, "7"))
         self.assertEqual(again, 409)                                  # same label within 3 s = double press
         args = run.call_args.args[0]
-        self.assertEqual(args[:5], ["lp", "-d", "Dymo-550-Turbo", "-n", "3"])
+        self.assertEqual(args[:5], ["lp", "-d", "Dymo-550-Turbo", "-n", "1"])  # DYMO's CUPS driver ignores -n:
+        files = [a for a in args if a.endswith(".png")]                # the label file once per copy, one job
+        self.assertEqual((len(files), len(set(files))), (3, 1))
         self.assertIn("PageSize=w79h252", args)
         self.assertIn("ppi=300", args)                               # 1:1 — the canvas is the printable area
         with mock.patch.object(app.ipp, "job", side_effect=LookupError("gone")):     # not this PC's real CUPS

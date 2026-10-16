@@ -82,7 +82,8 @@ def serve(conn, out, counter, lock):
         conn.close()
     if len(data) <= 3:                                        # a bare status / roll poll (the Windows port monitor does these)
         return
-    ROLL["left"] = max(0, ROLL["left"] - max(1, data.count(b"\x1bE") + data.count(b"\x1bG")))
+    labels = max(1, data.count(b"\x1bE"), data.count(b"\x1bG"))      # each label ends with ESC G + ESC E (feeds)
+    ROLL["left"] = max(0, ROLL["left"] - labels)
     with lock:
         counter[0] += 1
         n = counter[0]
@@ -93,7 +94,7 @@ def serve(conn, out, counter, lock):
     if img:
         with open(path[:-4] + ".pbm", "wb") as f:
             f.write(img[2])
-    print(f"job{n}: {len(data)} bytes" + (f", label {img[0]}×{img[1]} dots → {path[:-4]}.pbm" if img else " (no raster)")
+    print(f"job{n}: {len(data)} bytes, {labels} label{'s' if labels != 1 else ''}" + (f", label {img[0]}×{img[1]} dots → {path[:-4]}.pbm" if img else " (no raster)")
           + f"  [{path}]", flush=True)
 
 

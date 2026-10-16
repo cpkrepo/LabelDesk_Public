@@ -123,22 +123,27 @@ def config():
     return c
 
 
-_found = {}
+_found = {"at": 0.0}
+FIND_TTL_S = 30          # Windows: look for the DYMO printers again this often (a printer re-added under a new name)
 
 
-def queue_for(kind):
+def queue_for(kind, refresh=False):
     """The CUPS queue (Fedora) or Windows printer name for a label kind. Windows: the DYMO 550 Turbo / 5XL installed
-    with DYMO Connect, found by name — config tag_printer / ship_printer override."""
+    with DYMO Connect, found by name — config tag_printer / ship_printer override. Found again every FIND_TTL_S (and
+    with refresh=True): DYMO's usual fix for an "offline" printer is to delete and re-add it, often as "… (Copy 1)",
+    and the old name must not stick until LabelDesk restarts."""
     cfg = config()
     if WINDOWS:
         override = cfg.get("tag_printer" if kind == "tag" else "ship_printer")
         if override:
             return override
-        if not _found.get(kind):
+        if refresh or time.time() - _found.get("at", 0) > FIND_TTL_S:
             try:
-                _found.update({k: v for k, v in winprint.find().items() if k in ("tag", "ship") and v})
-            except RuntimeError:
-                pass
+                f = winprint.find()
+                _found.clear()
+                _found.update({k: f[k] for k in ("tag", "ship") if f.get(k)}, at=time.time())
+            except (RuntimeError, OSError):
+                pass                                                 # spooler down: keep what we had
         return _found.get(kind) or ""
     return cfg["tag_queue"] if kind == "tag" else cfg["ship_queue"]
 
@@ -319,8 +324,15 @@ def submit(kind, png_bytes, copies, gray=None, lab=None):
         designed = lab is not None
         lab = lab or labels()[kind]
         sku = lab["stock"].split()[0]
-        job, _paper = winprint.submit(printer, kind, gray, copies, f"LabelDesk {lab['name']}",
-                                      paper=(sku,) if (kind == "tag" or designed) and sku[:1].isdigit() else None)
+        paper = (sku,) if (kind == "tag" or designed) and sku[:1].isdigit() else None
+        try:
+            job, _paper = winprint.submit(printer, kind, gray, copies, f"LabelDesk {lab['name']}", paper=paper)
+        except RuntimeError as e:
+            again = queue_for(kind, refresh=True)                   # deleted / re-added since we last looked?
+            if not str(e).startswith("opening") or not again or again == printer:
+                raise
+            printer = again
+            job, _paper = winprint.submit(printer, kind, gray, copies, f"LabelDesk {lab['name']}", paper=paper)
         return printer, job
     if MAC and gray:
         return lp(kind, label_pdf(lab or labels()[kind], *gray), copies, ".pdf", lab)
@@ -366,8 +378,11 @@ def lp(kind, data, copies, suffix=".png", lab=None):
     try:
         lab = lab or labels()[kind]
         opts = ["-o", "ppi=300", "-o", "position=center"] if suffix == ".png" else []
-        r = subprocess.run(["lp", "-d", queue, "-n", str(copies), "-t", f"LabelDesk {lab['name']}",
-                            "-o", f"PageSize={lab['page']}", *opts, path], capture_output=True, text=True, timeout=30)
+        # copies = the label file that many times in ONE job: DYMO's CUPS driver ignores `lp -n` (3 copies printed one
+        # label — tested 2026-10-16 with tests/fake_labelwriter.py); each file goes through the same filters, 1:1
+        r = subprocess.run(["lp", "-d", queue, "-n", "1", "-t", f"LabelDesk {lab['name']}",
+                            "-o", f"PageSize={lab['page']}", *opts, *[path] * copies], capture_output=True, text=True,
+                           timeout=30)
     finally:
         os.unlink(path)
     if r.returncode != 0:
@@ -435,6 +450,9 @@ def job_status(hid):
             return {"state": "waiting", "message": str(e)}
         if s["state"] == "failed":
             why = win_plain(s)
+            _answer.pop(r["kind"], None)                          # ask the network now, not 20 s ago
+            if gone := not_answering(r["kind"], busy_ok=True):    # Windows' port says just "error" for a printer
+                why = f"not printed: the printer is {gone} — then press Print again"   # that's off / unplugged / moved
             winprint.cancel(r["queue"], r["job"])
             update(hid, state="failed", message=why)
             return {"state": "failed", "message": why}
@@ -774,6 +792,25 @@ def download(url, limit, accept="application/octet-stream"):
     return data
 
 
+def psq(s):
+    """A PowerShell single-quoted string: ' doubled (a user named O'Brien has it in every path)."""
+    return "'" + str(s).replace("'", "''") + "'"
+
+
+def update_script(pid, msi_path, log, pythonw, server, older):
+    """The PowerShell the update helper runs: wait for this server to exit, (older version: uninstall what's there,)
+    install the MSI, start the server again. Paths are quoted with psq (O'Brien) and the file gets a BOM (José)."""
+    q = lambda path: psq(f'"{path}"')                              # noqa: E731 — msiexec/pythonw want "path" args
+    # Windows Installer's own list of LabelDesk installs (by the fixed UpgradeCode in windows/labeldesk.wxs) — per-user
+    # MSIs aren't in the Uninstall registry key (found on the test VM)
+    remove = ("$wi = New-Object -ComObject WindowsInstaller.Installer; "
+              f"foreach ($c in @($wi.RelatedProducts('{UPGRADE_CODE}'))) "
+              "{ Start-Process msiexec.exe -ArgumentList '/x',$c,'/qb' -Wait }; ") if older else ""
+    return (f"Wait-Process -Id {int(pid)} -Timeout 60 -ErrorAction SilentlyContinue; {remove}"
+            f"$p = Start-Process msiexec.exe -ArgumentList '/i',{q(msi_path)},'/qb','/l*v',{q(log)} -Wait -PassThru; "
+            f"Start-Process {psq(pythonw)} -ArgumentList {q(server)}; exit $p.ExitCode")
+
+
 def install_windows_update(version):
     """Windows "Install update": a NEWER version (install_windows_version does the work)."""
     if not WINDOWS:
@@ -808,16 +845,9 @@ def install_windows_version(version):
     server = os.path.join(ROOT, "labeldesk-server.pyw")
     log = os.path.join(work, "install.log")
     older = version_tuple(version) < version_tuple(VERSION)
-    # Windows Installer's own list of LabelDesk installs (by the fixed UpgradeCode in windows/labeldesk.wxs) — per-user
-    # MSIs aren't in the Uninstall registry key (found on the test VM)
-    remove = ("$wi = New-Object -ComObject WindowsInstaller.Installer; "
-              f"foreach ($c in @($wi.RelatedProducts('{UPGRADE_CODE}'))) "
-              "{ Start-Process msiexec.exe -ArgumentList '/x',$c,'/qb' -Wait }; ") if older else ""
-    ps = (f"Wait-Process -Id {os.getpid()} -Timeout 60 -ErrorAction SilentlyContinue; {remove}"
-          f"$p = Start-Process msiexec.exe -ArgumentList '/i','\"{msi_path}\"','/qb','/l*v','\"{log}\"' -Wait -PassThru; "
-          f"Start-Process '{pythonw}' -ArgumentList '\"{server}\"'; exit $p.ExitCode")
+    ps = update_script(os.getpid(), msi_path, log, pythonw, server, older)
     script = os.path.join(work, "install-update.ps1")
-    with open(script, "w", encoding="utf-8") as f:
+    with open(script, "w", encoding="utf-8-sig") as f:              # BOM: PowerShell 5.1 reads BOM-less files as ANSI (José → JosÃ©)
         f.write(ps + "\n")
     args = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", script]
     # CREATE_NO_WINDOW (a hidden console — PowerShell started DETACHED_PROCESS, i.e. with no console, quits at once:
@@ -873,8 +903,14 @@ class QueueOps:
         return queue_for(kind)
 
     def uri(self, q):
-        if WINDOWS:
-            return "windows:" + q if q else None
+        if WINDOWS:                                              # its Standard TCP/IP port's address when it has one:
+            if not q:                                            # roll status + "it moved" work like on Fedora/Mac
+                return None
+            try:
+                host, port = winprint.port_address(q)
+            except (RuntimeError, OSError):
+                host = port = None
+            return f"socket://{host}:{port}" if host else "windows:" + q
         r = subprocess.run(["lpstat", "-v", q], capture_output=True, text=True, timeout=10)
         m = re.search(r":\s*(\S+)\s*$", r.stdout.strip()) if r.returncode == 0 else None
         return m.group(1) if m else None
@@ -917,8 +953,11 @@ class QueueOps:
     def busy(self, kind):
         if any(time.time() - t < 8 for t in RECENT.values()):          # LabelDesk just sent something
             return True
-        if WINDOWS:
-            return False
+        if WINDOWS:                                              # anything in its Windows queue: leave the port alone
+            try:
+                return winprint.queued(queue_for(kind)) > 0
+            except (RuntimeError, OSError):
+                return False
         try:
             return ipp.printer(queue_for(kind))["state"] == "printing"
         except (LookupError, OSError):
@@ -1037,6 +1076,34 @@ def use_printer(kind, k):
     AUTO.offers = [o for o in AUTO.offers if autoprint.key(o) != k]
 
 
+_answer = {}                     # kind → (time, text or "") — the printer-bar refresh asks often; 20 s is plenty
+
+
+def not_answering(kind, now=None, busy_ok=False):
+    """Plain text when the printer's TCP/IP port address doesn't answer (off, cable out, or it got a new address
+    — DYMO's most common network problem), else "". Unknown address (WSD/USB) or a job going to it: "" (don't guess) —
+    busy_ok: ask anyway (the failed job itself is still in the queue)."""
+    if not config().get("auto_printers", True):                   # network checks off (like the roll): say nothing
+        return ""
+    now = time.time() if now is None else now
+    hit = _answer.get(kind)
+    if hit and now - hit[0] < 20:
+        return hit[1]
+    text = ""
+    try:
+        ip, port = autoprint.socket_host(AUTO.ops.uri(queue_for(kind)))
+        if ip and (busy_ok or not AUTO.ops.busy(kind)) and not AUTO.ops.answers(ip, port):
+            moved = [o for o in AUTO.offers if o.get("kind") == kind and o.get("why") == "moved" and o.get("ip")]
+            text = (f"not answering at {ip} — check its power and network cable" +
+                    (f"; LabelDesk found it at {moved[0]['ip']} — use it in Settings → Printers" if moved else
+                     ("; if its address changed, Settings → DYMO printers by IP" if WINDOWS else
+                      "; if its address changed, Settings → Printers → Look again")))
+    except Exception as e:                                        # noqa: BLE001 — a status line must never fail
+        print("printer check:", repr(e), flush=True)
+    _answer[kind] = (now, text)
+    return text
+
+
 def _printers():
     out = {}
     if WINDOWS:
@@ -1052,8 +1119,10 @@ def _printers():
                 out[kind] = {"queue": name, "ok": False, "paused": False, "status": str(e)}
                 continue
             bad = [r for r in p["reasons"] if r in WIN_PLAIN or r in ("not available",)]
-            out[kind] = {"queue": name, "ok": not bad, "paused": "paused" in p["reasons"],
-                         "status": win_plain({"reasons": bad}) if bad else "ready"}
+            status = win_plain({"reasons": bad}) if bad else "ready"
+            if not bad and (gone := not_answering(kind)):           # Windows still says "ready" for a dead address
+                bad, status = ["offline"], gone
+            out[kind] = {"queue": name, "ok": not bad, "paused": "paused" in p["reasons"], "status": status}
         return out
     for kind in ("tag", "ship"):
         q = queue_for(kind)
@@ -1070,6 +1139,8 @@ def _printers():
         errors = [r for r in p["reasons"] if r.endswith("-error") and r != "com.dymo.busy-error"]
         text = "paused on this PC — press Resume" if paused else (ipp.plain(errors) if errors else
                                                                    "printing" if p["state"] == "printing" else "ready")
+        if text == "ready" and (gone := not_answering(kind)):        # CUPS says idle/ready for a printer that's off
+            errors, text = ["offline"], gone
         out[kind] = {"queue": q, "ok": not paused and not errors, "paused": paused, "status": text}
     return out
 
@@ -1424,6 +1495,17 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"error": str(e)}, 502)
 
 
+def stale_hold(cfg):
+    """Settings → Version holds this PC on a version; every switch restarts LabelDesk on that version. Starting on a
+    DIFFERENT one means a newer installer was run by hand (or the switch failed): the old hold would silence update
+    notices forever (seen on the test VM: held at 0.8.1, running 0.9.2), so it's dropped. Only at start — mid-switch
+    the version still differs."""
+    held = cfg.get("hold_version")
+    if held and held != VERSION:
+        save_config(hold_version=None)
+        print(f"version hold {held} dropped: running {VERSION}", flush=True)
+
+
 class Server(ThreadingHTTPServer):
     # Windows' SO_REUSEADDR lets a second server bind a port that's in use (both would watch the inbox → double prints);
     # Windows binds exclusively without it
@@ -1440,6 +1522,7 @@ def main():
     except OSError as e:
         print(f"LabelDesk is already running on port {cfg['port']} ({e}) — this copy exits", flush=True)
         return
+    stale_hold(cfg)
     dl = os.environ.get("LABELDESK_DOWNLOADS") or downloads_dir()
     dirs = ([] if MAC else [(SPOOL, True)]) + ([(dl, False)] if cfg["watch_downloads"] else [])   # Mac: no print-dialog printer
     INBOX = Inbox(dirs)

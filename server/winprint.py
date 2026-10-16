@@ -39,15 +39,37 @@ PRINTER_STATUS = {0x1: "paused", 0x2: "error", 0x10: "paper jam", 0x20: "paper o
                   0x100000: "needs attention", 0x400000: "door open", 0x200: "not available", 0x80000: "manual feed"}
 
 
+# the Windows errors a shop PC actually hits, in plain words (the number stays, for whoever looks it up)
+WIN_ERRORS = {1722: "Windows' print service isn't running — restart the PC (or start \"Print Spooler\" in Services)",
+              1801: "that printer isn't installed on this PC any more — add it again in DYMO Connect",
+              1797: "the DYMO driver is missing — reinstall DYMO Connect",
+              5: "Windows refused (access denied) — ask whoever manages this PC",
+              1804: "the DYMO driver refused the label — reinstall DYMO Connect"}
+
+
 def _check(ok, what):
     if not ok:
-        raise RuntimeError(f"{what} failed (Windows error {ctypes.get_last_error()})")
+        code = ctypes.get_last_error()
+        plain = WIN_ERRORS.get(code)
+        raise RuntimeError(f"{what} failed: {plain} (Windows error {code})" if plain else
+                           f"{what} failed (Windows error {code})")
 
 
 class DOCINFOW(ctypes.Structure if sys.platform == "win32" else object):
     if sys.platform == "win32":
         _fields_ = [("cbSize", ctypes.c_int), ("lpszDocName", wintypes.LPCWSTR), ("lpszOutput", wintypes.LPCWSTR),
                     ("lpszDatatype", wintypes.LPCWSTR), ("fwType", wintypes.DWORD)]
+
+
+class PRINTER_INFO_2(ctypes.Structure if sys.platform == "win32" else object):
+    if sys.platform == "win32":
+        _fields_ = [(f, wintypes.LPWSTR) for f in ("pServerName", "pPrinterName", "pShareName", "pPortName",
+                                                    "pDriverName", "pComment", "pLocation")] + \
+                   [("pDevMode", ctypes.c_void_p)] + \
+                   [(f, wintypes.LPWSTR) for f in ("pSepFile", "pPrintProcessor", "pDatatype", "pParameters")] + \
+                   [("pSecurityDescriptor", ctypes.c_void_p)] + \
+                   [(f, wintypes.DWORD) for f in ("Attributes", "Priority", "DefaultPriority", "StartTime",
+                                                   "UntilTime", "Status", "cJobs", "AveragePPM")]
 
 
 def find():
@@ -59,25 +81,49 @@ def find():
     winspool.EnumPrintersW(flags, None, 2, None, 0, ctypes.byref(need), ctypes.byref(got))
     buf = ctypes.create_string_buffer(need.value)
     _check(winspool.EnumPrintersW(flags, None, 2, buf, need, ctypes.byref(need), ctypes.byref(got)), "EnumPrinters")
-
-    class PRINTER_INFO_2(ctypes.Structure):
-        _fields_ = [(f, wintypes.LPWSTR) for f in ("pServerName", "pPrinterName", "pShareName", "pPortName",
-                                                    "pDriverName", "pComment", "pLocation")] + \
-                   [("pDevMode", ctypes.c_void_p)] + \
-                   [(f, wintypes.LPWSTR) for f in ("pSepFile", "pPrintProcessor", "pDatatype", "pParameters")] + \
-                   [("pSecurityDescriptor", ctypes.c_void_p)] + \
-                   [(f, wintypes.DWORD) for f in ("Attributes", "Priority", "DefaultPriority", "StartTime",
-                                                   "UntilTime", "Status", "cJobs", "AveragePPM")]
-
-    printers = [(p.pPrinterName, (p.pDriverName or "").lower())
+    printers = [(p.pPrinterName, (p.pDriverName or "").lower(), p.Status, p.Attributes)
                 for p in ctypes.cast(buf, ctypes.POINTER(PRINTER_INFO_2 * got.value)).contents]
-    names = [n for n, _ in printers]
+    return pick_printers(printers, answers)
+
+
+def answers(name):
+    """Does the printer's TCP/IP port address answer? None = not a TCP/IP port (can't tell)."""
+    import socket
+    try:
+        host, port = port_address(name)
+    except (RuntimeError, OSError):
+        return None
+    if not host:
+        return None
+    try:
+        socket.create_connection((host, port), timeout=1).close()
+        return True
+    except OSError:
+        return False
+
+
+def pick_printers(printers, answers=None):
+    """[(name, driver lowercased, status, attributes)] → {"tag", "ship", "all"}. A name match beats a driver match; among
+    several (a re-added printer leaves "… (Copy 1)" beside the old one, often pointing at the printer's OLD address and
+    not marked offline by Windows) one that answers on the network wins, then one Windows doesn't call offline, then
+    one that isn't a copy. answers(name) → True/False/None is only asked when there's a choice."""
+    PRINTER_ATTRIBUTE_WORK_OFFLINE = 0x400
+
+    def rank(p, reach):
+        name, _, status, attrs = p
+        return (reach.get(name) is False,
+                bool(status & (0x80 | 0x2 | 0x200) or attrs & PRINTER_ATTRIBUTE_WORK_OFFLINE),   # offline/error/n.a.
+                "(copy" in name.lower())
 
     def pick(*words):
-        return (next((n for n, _ in printers if all(w in n.lower() for w in words)), None)
-                or next((n for n, d in printers if "dymo" in d and all(w in d for w in words)), None))
+        for group in ([p for p in printers if all(w in p[0].lower() for w in words)],
+                      [p for p in printers if "dymo" in p[1] and all(w in p[1] for w in words)]):
+            if group:
+                reach = {p[0]: answers(p[0]) for p in group} if answers and len(group) > 1 else {}
+                return min(group, key=lambda p: rank(p, reach))[0]   # min is stable: first listed wins a tie
+        return None
 
-    return {"tag": pick("550", "turbo") or pick("550"), "ship": pick("5xl"), "all": names}
+    return {"tag": pick("550", "turbo") or pick("550"), "ship": pick("5xl"), "all": [p[0] for p in printers]}
 
 
 def _devmode(printer, kind, copies, words=None):
@@ -115,16 +161,17 @@ def _devmode(printer, kind, copies, words=None):
 
 
 def submit(printer, kind, gray, copies=1, title="LabelDesk", paper=None):
-    """Print one label. gray = (width, height, bytes: one 0-255 value per pixel, rows top-down) at 300 dpi."""
+    """Print `copies` labels as one job. gray = (width, height, bytes: one 0-255 value per pixel, rows top-down) at
+    300 dpi. Each copy is its own page (the driver's DEVMODE copies stays 1): drivers may ignore dmCopies — DYMO's CUPS
+    driver ignores its equivalent — and a page per label always prints that many."""
     w, h, pixels = gray
-    dm, paper = _devmode(printer, kind, copies, paper)
+    dm, paper = _devmode(printer, kind, 1, paper)
     hdc = gdi32.CreateDCW("WINSPOOL", printer, None, dm)
     _check(hdc, f"opening {printer}")
     try:
         di = DOCINFOW(ctypes.sizeof(DOCINFOW), title, None, None, 0)
         job = gdi32.StartDocW(hdc, ctypes.byref(di))
         _check(job > 0, "StartDoc")
-        _check(gdi32.StartPage(hdc) > 0, "StartPage")
         dpx, dpy = gdi32.GetDeviceCaps(hdc, LOGPIXELSX), gdi32.GetDeviceCaps(hdc, LOGPIXELSY)
         pw, ph = gdi32.GetDeviceCaps(hdc, PHYSICALWIDTH), gdi32.GetDeviceCaps(hdc, PHYSICALHEIGHT)
         ox, oy = gdi32.GetDeviceCaps(hdc, PHYSICALOFFSETX), gdi32.GetDeviceCaps(hdc, PHYSICALOFFSETY)
@@ -143,14 +190,66 @@ def submit(printer, kind, gray, copies=1, title="LabelDesk", paper=None):
         bmi = BITMAPINFO(40, w, -h, 1, 8, 0, len(bits), 11811, 11811, 256, 256)
         for i in range(256):
             bmi.palette[i] = (i << 16) | (i << 8) | i
-        gdi32.SetStretchBltMode(hdc, 4)                                      # HALFTONE
-        _check(gdi32.StretchDIBits(hdc, x, y, dw, dh, 0, 0, w, h, bits, ctypes.byref(bmi), 0, 0x00CC0020) != 0,
-               "StretchDIBits")                                              # DIB_RGB_COLORS, SRCCOPY
-        _check(gdi32.EndPage(hdc) > 0, "EndPage")
+        for _ in range(max(1, int(copies))):
+            _check(gdi32.StartPage(hdc) > 0, "StartPage")
+            gdi32.SetStretchBltMode(hdc, 4)                                  # HALFTONE (reset by StartPage)
+            _check(gdi32.StretchDIBits(hdc, x, y, dw, dh, 0, 0, w, h, bits, ctypes.byref(bmi), 0, 0x00CC0020) != 0,
+                   "StretchDIBits")                                          # DIB_RGB_COLORS, SRCCOPY
+            _check(gdi32.EndPage(hdc) > 0, "EndPage")
         _check(gdi32.EndDoc(hdc) > 0, "EndDoc")
         return str(job), paper
     finally:
         gdi32.DeleteDC(hdc)
+
+
+def queued(printer):
+    """How many jobs are in the printer's Windows queue (PRINTER_INFO_2.cJobs)."""
+    h = _open(printer)
+    try:
+        need = wintypes.DWORD()
+        winspool.GetPrinterW(h, 2, None, 0, ctypes.byref(need))
+        buf = ctypes.create_string_buffer(need.value)
+        _check(winspool.GetPrinterW(h, 2, buf, need, ctypes.byref(need)), "GetPrinter")
+        return ctypes.cast(buf, ctypes.POINTER(PRINTER_INFO_2)).contents.cJobs
+    finally:
+        winspool.ClosePrinter(h)
+
+
+def port_address(printer):
+    """Where a printer's Windows port sends its jobs → (host, port), or (None, None) when it isn't a Standard TCP/IP port
+    (WSD, USB). From the port monitor's registry key, readable without admin rights."""
+    import re
+    import winreg
+    h = _open(printer)
+    try:
+        need = wintypes.DWORD()
+        winspool.GetPrinterW(h, 5, None, 0, ctypes.byref(need))               # PRINTER_INFO_5: name, port, …
+
+        class PRINTER_INFO_5(ctypes.Structure):
+            _fields_ = [("pPrinterName", wintypes.LPWSTR), ("pPortName", wintypes.LPWSTR), ("Attributes", wintypes.DWORD),
+                        ("DeviceNotSelectedTimeout", wintypes.DWORD), ("TransmissionRetryTimeout", wintypes.DWORD)]
+
+        buf = ctypes.create_string_buffer(max(need.value, ctypes.sizeof(PRINTER_INFO_5)))
+        _check(winspool.GetPrinterW(h, 5, buf, need, ctypes.byref(need)), "GetPrinter")
+        port = (ctypes.cast(buf, ctypes.POINTER(PRINTER_INFO_5)).contents.pPortName or "").split(",")[0].strip()
+    finally:
+        winspool.ClosePrinter(h)
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Control\\Print\\Monitors\\"
+                            "Standard TCP/IP Port\\Ports\\" + port) as k:
+            vals = {}
+            for name in ("HostName", "IPAddress", "PortNumber", "Protocol"):
+                try:
+                    vals[name] = winreg.QueryValueEx(k, name)[0]
+                except OSError:
+                    pass
+    except OSError:
+        m = re.fullmatch(r"(?:IP_)?(\d+\.\d+\.\d+\.\d+)(?:_\d+)?", port)        # "IP_192.168.1.50" without a key
+        return (m.group(1), 9100) if m else (None, None)
+    if vals.get("Protocol", 1) != 1:                                    # 2 = LPR: not the raw 9100 socket
+        return None, None
+    host = (vals.get("HostName") or vals.get("IPAddress") or "").strip()
+    return (host, int(vals.get("PortNumber") or 9100)) if host else (None, None)
 
 
 def _open(printer):
