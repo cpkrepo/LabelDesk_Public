@@ -35,7 +35,8 @@ prints through DYMO's driver). Pick your computer:
 1. Install **[DYMO Connect for Desktop](https://www.dymo.com/support?cfid=online-support-sw-downloads)** and add both
    printers in it. Can't find them (often on Wi-Fi)? See [SETUP.md section 3](SETUP.md#3-printers-that-cant-be-found-wi-fi-windows).
 2. Download **`LabelDesk-<version>.msi`** from the **[latest release](https://github.com/cpkrepo/LabelDesk_Public/releases/latest)**
-   and run it. No admin rights needed.
+   and run it. No admin rights needed. **Already have LabelDesk?** Run the new `.msi` over it — don't uninstall first;
+   it replaces the old version (even while LabelDesk is running) and keeps your settings and history.
 3. Start menu → **LabelDesk**. It also starts in the background when you log in.
 
 ### macOS (14 Sonoma or newer)
@@ -80,6 +81,9 @@ The full guide for technicians (printers that can't be found, GitHub access, pub
 After each print LabelDesk asks GitHub for the newest version number (one small file; nothing about your labels is
 sent) and shows a notice when there's a newer one:
 - **Windows:** **Install update** — downloads the installer from the release, checks its SHA-256, installs, restarts.
+  **On 0.8.1 or older** that button doesn't work: download the newest `LabelDesk-<version>.msi` from the
+  [latest release](https://github.com/cpkrepo/LabelDesk_Public/releases/latest) and double-click it once (no uninstall
+  needed since 0.9.2); after that **Install update** works.
 - **Mac and Fedora:** **Update now** — or run `tools/update.sh` in `~/LabelDesk_Public` if this computer has changes of
   its own (they're sent to the owner as a pull request, see below).
 
