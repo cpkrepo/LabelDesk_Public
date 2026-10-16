@@ -60,3 +60,23 @@ Owner wants each PC **independent** (no shared server). Same app; only printing 
   over itself; uninstall while running. Harness: C:\ldtest on the VM (st/clean/inst/start/upd/un/ir.ps1; ir.ps1 runs a
   step in labtest's interactive session like a double-click). Dialogs: screendump via the QEMU monitor; QEMU sendkey
   doesn't reach them — AppActivate + SendKeys from an interactive scheduled task does.
+
+## Shakedown 2026-10-16 (0.9.3 candidate): failure points from DYMO Connect's known problems
+Searched DYMO Connect / LabelWriter issues (printer offline after an IP change, re-adding printers leaving "(Copy 1)",
+wrong label size, non-genuine/empty rolls, spooler trouble, copies) and tested each on the VM + Fedora. Found and fixed:
+- **Copies (Fedora/Mac)**: DYMO's CUPS driver ignores `lp -n` — 3 copies printed 1. Now the file goes in once per copy.
+  Windows' driver honours dmCopies, but each copy is now its own page anyway (same result, no driver dependence).
+- **Windows never knew the printer's address** (QueueOps.uri was "windows:<name>"): no roll, no wrong-roll check, no
+  "it moved", and the bar said "ready" for a dead printer. `winprint.port_address()` reads the Standard TCP/IP port's
+  host from HKLM\SYSTEM\CurrentControlSet\Control\Print\Monitors\Standard TCP/IP Port\Ports\<port> (no admin).
+- **Printer cache never refreshed** (`_found`): a deleted/re-added/renamed printer failed until restart. Now re-found
+  every 30 s and on an "opening printer" error (one retry); duplicates ranked by answering on the network.
+- **A failed job while the printer was off said "check lid, roll, lights"** — now "not printed: the printer is not
+  answering at <ip> … then press Print again" (failed jobs are still cancelled on purpose: no surprise prints later).
+- **Raw Windows error numbers** → plain words (1722 spooler, 1801 printer gone, 1797 driver, 5, 1804).
+- **Install update helper**: PowerShell 5.1 reads BOM-less files as ANSI → José's paths broke (proven on the VM);
+  O'Brien broke the single quotes. Now BOM + doubled quotes (`update_script`, tested with PowerShell's parser).
+- **Stale version hold**: held at 0.8.1 while running 0.9.2 (seen on the VM) silenced update notices forever; dropped
+  at start when it doesn't match.
+Regression runners (with PASS/FAIL per case) live in the owner's private cockpit repo (engineer/nightshift/labeldesk/:
+regress-win.sh against the newest releases, regress-fed.sh) and run nightly/weekly.

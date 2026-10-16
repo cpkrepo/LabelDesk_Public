@@ -1116,8 +1116,14 @@ def _printers():
             try:
                 p = winprint.printer(name)
             except RuntimeError as e:
-                out[kind] = {"queue": name, "ok": False, "paused": False, "status": str(e)}
-                continue
+                again = queue_for(kind, refresh=True)              # renamed / re-added since we last looked?
+                try:
+                    if not again or again == name:
+                        raise e
+                    name, p = again, winprint.printer(again)
+                except RuntimeError as e2:
+                    out[kind] = {"queue": again or name, "ok": False, "paused": False, "status": str(e2)}
+                    continue
             bad = [r for r in p["reasons"] if r in WIN_PLAIN or r in ("not available",)]
             status = win_plain({"reasons": bad}) if bad else "ready"
             if not bad and (gone := not_answering(kind)):           # Windows still says "ready" for a dead address

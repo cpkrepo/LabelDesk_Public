@@ -7,6 +7,17 @@ installer attached) and any of them can be brought back with `tools/rollback.sh 
 the owner's `tools/update.sh` turns that heading into the version number when it publishes.
 
 ## Unreleased
+- **Copies work on Fedora and Mac**: asking for 3 labels printed only one (DYMO's driver ignores the copies setting).
+  Each copy is now sent as its own label, on every system.
+- **Windows: a printer that's off or has a new address is said plainly** — "not answering at 192.168.1.50 — check its
+  power and network cable" instead of "ready", and a label that couldn't print says why. Fedora and Mac too.
+- **Windows: re-added or renamed printers are found without restarting LabelDesk**, and when an old copy of a printer
+  is left behind ("… (Copy 1)"), LabelDesk uses the one that actually answers.
+- **Windows: the label roll and "labels left" show**, and LabelDesk warns before printing on the wrong roll or an
+  empty printer (it used to only see the roll when network discovery happened to work).
+- **Windows: plain words for Windows errors** (print service stopped, printer removed, driver missing).
+- **Install update works for user names with accents or apostrophes** (José, O'Brien).
+- A PC kept on an older version (Settings → Version) that's later updated by hand follows updates again.
 
 ## 0.9.2 — 2026-10-16
 - **Windows: installing a new version no longer needs an uninstall first.** The installer now stops the running

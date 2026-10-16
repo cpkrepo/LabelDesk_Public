@@ -94,6 +94,18 @@ class FindAgain(unittest.TestCase):
         self.assertEqual((q, job, self.sent), ("DYMO LabelWriter 550 Turbo (Copy 1)", "7",
                                                 [("DYMO LabelWriter 550 Turbo (Copy 1)", 3)]))
 
+    def test_printer_bar_follows_a_rename_at_once(self):
+        app.queue_for("tag")
+        self.names["tag"] = "Asset Tags"                                           # renamed seconds ago
+        def printer(name):
+            if name not in self.names.values():
+                raise RuntimeError(f"opening printer {name!r} failed (Windows error 1801)")
+            return {"state": "idle", "reasons": [], "message": "", "accepting": True}
+        self.stub.printer = printer
+        with mock.patch.object(app, "not_answering", lambda kind, **k: ""):
+            out = app._printers()
+        self.assertEqual((out["tag"]["queue"], out["tag"]["status"]), ("Asset Tags", "ready"))
+
     def test_spooler_down_keeps_what_was_found(self):
         app.queue_for("tag")
         self.stub.find = mock.Mock(side_effect=RuntimeError("EnumPrinters failed (Windows error 1722)"))
