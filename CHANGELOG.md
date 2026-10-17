@@ -7,6 +7,8 @@ installer attached) and any of them can be brought back with `tools/rollback.sh 
 the owner's `tools/update.sh` turns that heading into the version number when it publishes.
 
 ## Unreleased
+
+## 0.9.3 — 2026-10-16
 - **Copies work on Fedora and Mac**: asking for 3 labels printed only one (DYMO's driver ignores the copies setting).
   Each copy is now sent as its own label, on every system.
 - **Windows: a printer that's off or has a new address is said plainly** — "not answering at 192.168.1.50 — check its
