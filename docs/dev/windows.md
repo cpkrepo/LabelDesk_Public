@@ -17,7 +17,8 @@ Owner wants each PC **independent** (no shared server). Same app; only printing 
   config %APPDATA%\LabelDesk. wixl quirks: no RemoveFolder Directory=, no InstallPrivileges, heat needs -D Win64=yes.
 - Print-dialog printer on Windows: Settings → "Add the Shipping Label printer" → elevated add-shipping-printer.ps1
   (Microsoft Print To PDF + file port %LOCALAPPDATA%\LabelDesk\inbox\print-dialog.pdf; inbox notices rewrites).
-- Test VM: Windows 11 (QEMU, headless), DYMO Connect 1.5.1.20, printers → fake printer on the
+- Test VM: Windows 11 (QEMU, headless) on the owner's always-on MSI laptop (~/winvm; again from 2026-11-02 — the copy
+  on Magpie is spare, Magpie sleeps). DYMO Connect 1.5.1.20, printers → fake printer on the
   host (10.0.2.2:9100 — run tests/fake_labelwriter.py there). Drive the VM's desktop with a scheduled task
   (`-LogonType Interactive`) running PowerShell AppActivate/SendKeys/SetCursorPos — QEMU sendkey loses focus; Edge
   DevTools needs `--remote-debugging-port` AND a non-default `--user-data-dir`. Headless Chrome stalls on pdf.js workers / big image decodes — test browser paths in a real
