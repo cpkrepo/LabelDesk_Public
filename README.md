@@ -81,9 +81,9 @@ The full guide for technicians (printers that can't be found, GitHub access, pub
 After each print LabelDesk asks GitHub for the newest version number (one small file; nothing about your labels is
 sent) and shows a notice when there's a newer one:
 - **Windows:** **Install update** — downloads the installer from the release, checks its SHA-256, installs, restarts.
-  **On 0.8.1 or older** that button doesn't work: download the newest `LabelDesk-<version>.msi` from the
+  **On 0.8.1 or older — or on 0.9.0–0.9.2 when the Windows user name has an accent or apostrophe (José, O'Brien)** — that button doesn't work: download the newest `LabelDesk-<version>.msi` from the
   [latest release](https://github.com/cpkrepo/LabelDesk_Public/releases/latest) and double-click it once (no uninstall
-  needed since 0.9.2); after that **Install update** works.
+  needed: any 0.9.2+ installer replaces the old version); after that **Install update** works.
 - **Mac and Fedora:** **Update now** — or run `tools/update.sh` in `~/LabelDesk_Public` if this computer has changes of
   its own (they're sent to the owner as a pull request, see below).
 
