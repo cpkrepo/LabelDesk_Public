@@ -13,7 +13,7 @@
       0.23/0.06 + 3.21 × 0.997 in. Objects (Segoe UI, none bold, left): customer name 20.7 pt AlwaysFit · "Date Recieved:"
       16 pt · date ("August 21, 2024") 14.5 pt · "Ticket #:" 19.2 pt · shop logo ImageObject @2.88,0.67 0.56×0.34.
       Done: the logo (web/tag-logo.png) bottom-right of the BUILT-IN tag, 0.42" tall, thresholded to black/white.
-      Imported templates don't draw images yet, so an imported Asset Tag.dymo would print without the logo.
+      Imported templates draw the logo too (since 0.7.0) — see the "Template pictures" item below.
 - [ ] Shipping: print one real UPS PDF page, one FedEx PDF page and one screenshot; check each barcode scans and the
       label is upright (the app warns when a screenshot is < ~170 dpi at label size).
 - [ ] Does each printer advertise itself by name (dnssd)? add-printers.sh prefers that; otherwise give them DHCP
@@ -46,7 +46,7 @@
 - [ ] Fedora PCs installed from zips: move each to a git clone (README → Install) so update.sh works there.
 - [~] **.dymo template import** — BUILT 2026-10-03 (web/template.js: Layout menu, Import .dymo… / drop on the preview,
       {company} {customer} {received} {ticket} field patterns, offset + Rotate 180° apply). Tested with a synthetic 30321 template in
-      DYMO's format (render + barcode scan). Still open: the owner's real template (acceptance), shapes/images aren't drawn.
+      DYMO's format (render + barcode scan). Still open: the owner's real template (acceptance), shapes aren't drawn.
 - [~] Template pictures (ImageObject, found by base64 content) drawn since 0.7.0; tested with a synthetic template —
       check against the real Asset Tag.dymo.
 - [ ] (original spec) **.dymo template import (required by the owner, 2026-09-30):** open/drop a DYMO Connect `.dymo` file → LabelDesk
