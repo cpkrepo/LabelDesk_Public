@@ -33,8 +33,7 @@
       moves the whole built-in design incl. the logo (at +3 mm the logo's bottom edge can clip — it's what the printer does).
       Render-checked headless (sizes + barcodes, built-in/offset/template); NOT yet printed on a real or fake printer.
 - [ ] 0.6.0 update check + tools/update.sh: first real run once the repo is public (raw VERSION needs a public repo).
-- [~] Windows updates: Actions builds the MSI per tag + one-click Install update (0.7.0). MSI build verified with Ubuntu's
-      wixl (stand-in Python zip); the workflow itself and Install update have NOT run yet (needs the public repo + a Windows PC).
+- [~] Windows updates: Actions builds + attaches LabelDesk-<v>.msi/.sha256 to every v* release; Install update fixed in 0.9.0/0.9.2/0.9.3 and tested on the Win11 VM — regress-win 2026-11-02: 0.9.2 → 0.9.3 by Install update from the real GitHub release PASS (also double-click 0.7.0/0.9.2 → 0.9.3, repair, uninstall). Open: one Install update on a real shop PC.
 - [ ] Shop logo is per PC since 0.7.0: on each PC, Settings → Tag logo → choose the shop's logo file once.
 - [ ] Labels remaining: unknown whether the 550's status carries a count (DYMO's driver reads only bytes 0-4, 8, 10, 21).
       At work: tools/dymo-status.py <ip> --save a.json, print N labels, --compare a.json. Build the display only if a byte
